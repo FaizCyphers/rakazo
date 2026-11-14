@@ -98,6 +98,8 @@ export function mapRoutine(row: {
   watchState: unknown;
   lastRunAt: Date | null;
   nextRunAt: Date | null;
+  endsAt: Date | null;
+  until: string | null;
   createdAt: Date;
 }): Routine {
   return {
@@ -120,6 +122,8 @@ export function mapRoutine(row: {
     watchState: parseRoutineWatchState(row.watchState),
     lastRunAt: row.lastRunAt?.toISOString() ?? null,
     nextRunAt: row.nextRunAt?.toISOString() ?? null,
+    endsAt: row.endsAt?.toISOString() ?? null,
+    until: row.until,
     scheduleDelayed: routineScheduleDelayed({
       active: row.active,
       nextRunAt: row.nextRunAt?.getTime() ?? null,

@@ -137,6 +137,8 @@ export function selectBuiltinToolsForRun(options: {
   emailClaimable?: boolean;
   /** The inbox may be read and this server can send email. */
   emailSend?: boolean;
+  /** A run of a routine with a done condition, which may turn it off (schedule_finish). */
+  routineUntil?: boolean;
 }) {
   const disabled = disabledBuiltinToolSet(options.disabledBuiltinTools);
   const ownerStartedRun = isOwnerStartedRun(options.trigger, Boolean(options.followUpFromUser));
@@ -191,6 +193,8 @@ export function selectBuiltinToolsForRun(options: {
           "generate_video",
         ].includes(tool.name)) &&
       (options.voiceCall || tool.name !== "end_call") &&
+      ((options.routineUntil && options.trigger === "routine") ||
+        tool.name !== "schedule_finish") &&
       (emailMailbox || !EMAIL_INBOX_TOOL_NAMES.has(tool.name)) &&
       ((emailMailbox && options.emailSend) || tool.name !== "send_email") &&
       (emailClaimOffered || tool.name !== "claim_email_address") &&

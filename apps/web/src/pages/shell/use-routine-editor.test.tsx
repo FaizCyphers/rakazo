@@ -24,6 +24,8 @@ const routine: Routine = {
   githubEnabled: false,
   messageProvider: null,
   emailSenders: null,
+  endsAt: null,
+  until: null,
   modelProvider: null,
   modelId: null,
   thinkingLevel: null,

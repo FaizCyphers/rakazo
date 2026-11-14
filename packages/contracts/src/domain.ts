@@ -562,6 +562,23 @@ export const ROUTINE_TRIGGER_REQUIRED =
 export const RoutineEmailSendersSchema = z.enum(["owner", "domain"]);
 export type RoutineEmailSenders = z.infer<typeof RoutineEmailSendersSchema>;
 
+/** What a routine's runs check for; a run that finds it true turns the routine off. */
+export const ROUTINE_UNTIL_MAX_LENGTH = 500;
+export const RoutineUntilSchema = z.string().trim().min(1).max(ROUTINE_UNTIL_MAX_LENGTH);
+
+/** How far out a routine's end time may be. */
+export const ROUTINE_ENDS_AT_MAX_MS = 366 * 24 * 60 * 60_000;
+export const RoutineEndsAtSchema = z
+  .date()
+  .refine((endsAt) => endsAt.getTime() > Date.now(), "endsAt must be in the future.")
+  .refine(
+    (endsAt) => endsAt.getTime() <= Date.now() + ROUTINE_ENDS_AT_MAX_MS,
+    "endsAt must be within a year.",
+  );
+
+/** Runs that fail in a row before a routine with an end time or condition turns itself off. */
+export const ROUTINE_FAILURES_TO_END = 3;
+
 export const RoutineSchema = z.object({
   id: Id,
   botId: Id,
@@ -590,6 +607,10 @@ export const RoutineSchema = z.object({
   watchState: RoutineWatchStateSchema.nullable(),
   lastRunAt: z.string().nullable(),
   nextRunAt: z.string().nullable(),
+  /** Null runs until turned off. Absent on older servers. */
+  endsAt: z.string().nullable().default(null),
+  /** Null has no done condition. Absent on older servers. */
+  until: z.string().nullable().default(null),
   /** Computed by the server; absent on older servers. Not a worker-health diagnosis. */
   scheduleDelayed: z.boolean().optional(),
   createdAt: z.string(),

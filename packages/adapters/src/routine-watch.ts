@@ -18,6 +18,7 @@ import {
   connectorKindFromToolName,
   isAbandonedRequest,
   redactSecrets,
+  routineNextRunBeforeEnd,
   watchToolRefusal,
 } from "@rakazo/core";
 import type { ComputerMode, PrismaClient, ThreadEvents } from "@rakazo/db";
@@ -821,7 +822,7 @@ export type RoutineWatchTickDeps = RoutineWatchDeps & {
   jobs: JobPublisher;
 };
 
-type TickRoutine = RoutineWatchTarget & { name: string };
+type TickRoutine = RoutineWatchTarget & { name: string; endsAt?: Date | null };
 
 export type RoutineWatchTick =
   | { run: false }
@@ -922,9 +923,10 @@ export async function tickRoutineWatch(
     }
     return { run: false };
   }
-  const nextRunAt = nextRoutineWatchAt(
-    watch,
-    new Date(Math.max(now.getTime(), scheduledAt.getTime())),
+  // A watch with an end time checks once more then, and that wake ends it.
+  const nextRunAt = routineNextRunBeforeEnd(
+    nextRoutineWatchAt(watch, new Date(Math.max(now.getTime(), scheduledAt.getTime()))),
+    routine.endsAt ?? null,
   );
   if (outcome.changed) {
     return {

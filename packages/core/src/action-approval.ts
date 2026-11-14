@@ -29,6 +29,7 @@ const APPROVAL_EXEMPT_TOOLS = new Set([
   "schedule_list",
   "schedule_update",
   "schedule_cancel",
+  "schedule_finish",
   "list_fleet",
   "organize_bot",
   // The wallet owner approves every purchase in the wallet itself; a card here would ask twice.
@@ -267,6 +268,7 @@ const OWN_STATE_RESULT_TOOLS = new Set([
   "save_shared_memory",
   "schedule_cancel",
   "schedule_create",
+  "schedule_finish",
   "schedule_list",
   "schedule_update",
   "scratchpad_add",

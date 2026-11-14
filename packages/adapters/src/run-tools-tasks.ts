@@ -3,6 +3,7 @@ import {
   desktopProtectionGuardMessage,
   protectedComputerLifecycleRefusal,
 } from "./desktop-command-guard.js";
+import { finishRoutineFromRun } from "./routine-end.js";
 import type { RunContext } from "./run-context.js";
 import type { ToolHandlers } from "./run-tool-gate.js";
 import {
@@ -236,6 +237,7 @@ export const taskTools: ToolHandlers = {
         active: typeof args.active === "boolean" ? args.active : undefined,
         timezone: isScheduleValueProvided(args.timezone) ? String(args.timezone) : undefined,
         schedule: compactScheduleInput(scheduleTimingArgs(args)),
+        end: { until: args.until, endsAt: args.endsAt },
       }),
     );
   },
@@ -258,6 +260,9 @@ export const taskTools: ToolHandlers = {
       name: args.name ? String(args.name) : undefined,
     });
     return call.finish(cancelled);
+  },
+  async schedule_finish(ctx, call) {
+    return call.finish(await finishRoutineFromRun(ctx.deps, ctx.run));
   },
   async skill_read(ctx, call) {
     const { deps, run } = ctx;

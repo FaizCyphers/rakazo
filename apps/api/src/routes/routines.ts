@@ -11,6 +11,7 @@ import {
   expandSkillReferencesInPrompt,
   hasMixedOneShotSchedule,
   isOneShotRoutineCrons,
+  routineNextRunBeforeEnd,
 } from "@rakazo/core";
 import { IsolationError, isRecordNotFound, Prisma } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
@@ -221,7 +222,12 @@ export function routinesRoutes(ctx: RouterContext) {
             message: "A run time is only for one-shots that have not run yet.",
           });
         }
-        const nextRunAt = !active
+        // Turning an ended routine back on drops the end time it already passed.
+        const endsAt =
+          active && !existing.active && existing.endsAt && existing.endsAt.getTime() <= Date.now()
+            ? null
+            : existing.endsAt;
+        const scheduledNextRunAt = !active
           ? null
           : watch
             ? // Turning a watch on, or changing it, checks right away; otherwise keep its rhythm.
@@ -233,6 +239,7 @@ export function routinesRoutes(ctx: RouterContext) {
               : isOneShotRoutineCrons(crons)
                 ? (armedOneShotAt ?? existing.nextRunAt)
                 : (recalculatedNextRunAt ?? existing.nextRunAt);
+        const nextRunAt = routineNextRunBeforeEnd(scheduledNextRunAt, endsAt);
         const writesSchedule = nextRunAt?.getTime() !== existing.nextRunAt?.getTime();
         // An explicit on/off must not undo an enable, a disable or a finished one-shot that landed
         // after the read; neither may a schedule change computed from the old on/off state.
@@ -282,6 +289,7 @@ export function routinesRoutes(ctx: RouterContext) {
                 ? { watchState: Prisma.DbNull }
                 : {}),
               ...(writesSchedule ? { nextRunAt } : {}),
+              ...(endsAt === existing.endsAt ? {} : { endsAt }),
             },
           })
           .catch(async (error: unknown) => {

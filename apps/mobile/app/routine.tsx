@@ -159,6 +159,15 @@ function RoutineView({
             hour: "numeric",
             minute: "2-digit",
           });
+  const endsAt = routine.endsAt
+    ? new Date(routine.endsAt).toLocaleString(dateLocaleForUi(locale), {
+        weekday: "short",
+        month: "short",
+        day: "numeric",
+        hour: "numeric",
+        minute: "2-digit",
+      })
+    : null;
 
   async function testRun() {
     if (running) return;
@@ -248,6 +257,8 @@ function RoutineView({
           <SettingsRow key={trigger} title={trigger} />
         ))}
         {nextRun ? <SettingsRow key="next" title={t`Next run`} value={nextRun} /> : null}
+        {endsAt ? <SettingsRow key="ends" title={t`Ends`} value={endsAt} /> : null}
+        {routine.until ? <SettingsRow key="until" title={t`Until`} value={routine.until} /> : null}
       </SettingsGroup>
       <SettingsGroup>
         <SettingsRow
