@@ -1,132 +1,141 @@
 import type { Api, Model } from "@earendil-works/pi-ai";
 import { getSupportedThinkingLevels } from "@earendil-works/pi-ai";
 import { clampCatalogThinkingLevel } from "@rakazo/core";
+import type { PlanHeadroom } from "./model-quota.js";
 
-/** How hard a request is, as rated before a run picks its model. */
-export type TaskEffort = "low" | "medium" | "high";
+/** How hard a request is, rated before a run picks its model. Lowest that fits wins. */
+export const TASK_EFFORTS = ["low", "medium", "high", "max"] as const;
+export type TaskEffort = (typeof TASK_EFFORTS)[number];
 
-/** Relative strength of a model within one pool, from what it costs and whether it reasons. */
-export type ModelTier = "light" | "standard" | "strong";
-
-const TIER_ORDER: readonly ModelTier[] = ["light", "standard", "strong"];
-const EFFORT_TIER: Record<TaskEffort, ModelTier> = {
-  low: "light",
-  medium: "standard",
-  high: "strong",
-};
-const EFFORT_THINKING: Record<TaskEffort, string> = {
-  low: "minimal",
-  medium: "medium",
-  high: "high",
-};
-
-/** A connected model the router may pick, in the user's own order. */
-export interface AutoRouteCandidate {
-  /** The connection that would run it; one budget and one cooldown per connection. */
-  connectionKey: string;
-  model: Model<Api>;
+/** One rung of a ladder: the model and thinking level a connection runs for an effort. */
+export interface LadderRung {
+  modelId: string;
+  thinkingLevel: string;
 }
+
+export type EffortLadder = Record<TaskEffort, LadderRung>;
+
+/**
+ * Default ladders per provider: a light model for low effort up to the strongest model at its
+ * highest thinking level for max. A connection can replace its provider's ladder.
+ */
+export const DEFAULT_EFFORT_LADDERS: Readonly<Record<string, EffortLadder>> = {
+  anthropic: {
+    low: { modelId: "claude-haiku-5-5", thinkingLevel: "low" },
+    medium: { modelId: "claude-sonnet-5-5", thinkingLevel: "medium" },
+    high: { modelId: "claude-opus-5-5", thinkingLevel: "high" },
+    max: { modelId: "claude-opus-5-5", thinkingLevel: "max" },
+  },
+  "openai-codex": {
+    low: { modelId: "gpt-6-luna", thinkingLevel: "low" },
+    medium: { modelId: "gpt-6.1-sol", thinkingLevel: "medium" },
+    high: { modelId: "gpt-6-astra", thinkingLevel: "high" },
+    max: { modelId: "gpt-6-astra", thinkingLevel: "xhigh" },
+  },
+  google: {
+    low: { modelId: "gemini-3.5-flash-lite", thinkingLevel: "low" },
+    medium: { modelId: "gemini-3.8-flash", thinkingLevel: "medium" },
+    high: { modelId: "gemini-4-argon", thinkingLevel: "high" },
+    max: { modelId: "gemini-4-argon", thinkingLevel: "max" },
+  },
+};
+
+/** A connected plan or key the router may pick, in the user's own order. */
+export interface AutoRoutePlan {
+  /** The connection; one usage reading and one cooldown per connection. */
+  connectionKey: string;
+  provider: string;
+  ladder: EffortLadder;
+}
+
+export interface AutoRouteOptions {
+  /** A plan used past this percent of any window is skipped while another has room. */
+  hardLimitPercent?: number;
+  /** Wins ties on headroom, and runs when no plan reports usage. */
+  preferredConnectionKey?: string;
+}
+
+/** Why a plan was picked, recorded on the run. */
+export type AutoRouteBasis = "usage" | "no-usage" | "only-option";
 
 export interface AutoRoutePick {
-  candidate: AutoRouteCandidate;
-  tier: ModelTier;
-  /** Null lets the model's own default apply. */
-  thinkingLevel: string | null;
+  plan: AutoRoutePlan;
+  rung: LadderRung;
+  basis: AutoRouteBasis;
 }
 
-/** Blended price per million tokens, weighting output like a typical agent turn (1 out : 3 in). */
-function blendedPrice(model: Model<Api>): number | undefined {
-  const { input, output } = model.cost;
-  if (!(input > 0) && !(output > 0)) return undefined;
-  return (3 * input + output) / 4;
-}
+export const DEFAULT_HARD_LIMIT_PERCENT = 90;
 
 /**
- * Tiers models by price within the pool, so the split follows what the user actually connected:
- * the cheapest third is light, the dearest third strong. Unpriced models (local, subscriptions)
- * count as standard, and a model that cannot reason is never strong.
- */
-export function tierPool(pool: readonly AutoRouteCandidate[]): Map<AutoRouteCandidate, ModelTier> {
-  const priced = pool
-    .map((candidate) => ({ candidate, price: blendedPrice(candidate.model) }))
-    .filter(
-      (entry): entry is { candidate: AutoRouteCandidate; price: number } =>
-        entry.price !== undefined,
-    )
-    .sort((a, b) => a.price - b.price);
-  const tiers = new Map<AutoRouteCandidate, ModelTier>();
-  const distinct = [...new Set(priced.map((entry) => entry.price))];
-  for (const { candidate, price } of priced) {
-    let tier: ModelTier = "standard";
-    if (distinct.length >= 2) {
-      const rank = distinct.indexOf(price) / (distinct.length - 1);
-      tier = rank < 1 / 3 ? "light" : rank > 2 / 3 ? "strong" : "standard";
-      if (distinct.length === 2) tier = rank === 0 ? "light" : "strong";
-    }
-    tiers.set(candidate, tier);
-  }
-  for (const candidate of pool) if (!tiers.has(candidate)) tiers.set(candidate, "standard");
-  for (const [candidate, tier] of tiers) {
-    if (tier === "strong" && !candidate.model.reasoning) tiers.set(candidate, "standard");
-  }
-  return tiers;
-}
-
-/** What a connection has left, as far as the router knows. */
-export interface ConnectionHeadroom {
-  /** True while a rate limit or usage window is cooling down. */
-  coolingDown: boolean;
-  /** Share of the known limit still free, 0 to 1; undefined when no limit is known. */
-  remaining?: number;
-}
-
-/** Below this share of a known limit, a connection is kept for when nothing else is left. */
-export const LOW_HEADROOM = 0.1;
-
-/**
- * Orders the pool for one run: the first entry runs, the rest become its backups.
- * Connections cooling down go last. Among the rest, the lowest tier that fits the effort comes
- * first, then stronger tiers, then weaker ones; within a tier, more headroom first, then the
- * user's order. A connection nearly out of its limit drops behind every one that is not.
+ * Orders the plans for one run: the first runs, the rest become its backups in order.
+ *
+ * Plans past the hard limit go behind the rest, and plans cooling down after a limit go last. The rest are ordered by
+ * headroom (100 minus the most-used window), most first; a plan with no recent reading counts as
+ * unknown and follows those with known room. Ties go to the preferred plan, then the user's order.
+ * Every plan runs the rung of its own ladder for the effort.
  */
 export function routeAutoModel(
-  pool: readonly AutoRouteCandidate[],
+  plans: readonly AutoRoutePlan[],
   effort: TaskEffort,
-  headroom: (connectionKey: string) => ConnectionHeadroom,
+  headroom: (connectionKey: string) => PlanHeadroom,
+  options: AutoRouteOptions = {},
 ): AutoRoutePick[] {
-  const tiers = tierPool(pool);
-  const wanted = TIER_ORDER.indexOf(EFFORT_TIER[effort]);
-  const tierRank = (tier: ModelTier) => {
-    const index = TIER_ORDER.indexOf(tier);
-    // Stronger than needed beats weaker than needed: an underpowered model fails the task.
-    return index >= wanted ? index - wanted : TIER_ORDER.length + (wanted - index);
-  };
-  const bucket = (state: ConnectionHeadroom) =>
-    state.coolingDown ? 2 : state.remaining !== undefined && state.remaining < LOW_HEADROOM ? 1 : 0;
-  const ranked = pool.map((candidate, order) => {
-    const state = headroom(candidate.connectionKey);
-    const tier = tiers.get(candidate) ?? "standard";
-    return { candidate, order, tier, bucket: bucket(state), remaining: state.remaining ?? 1 };
+  const hardLimit = options.hardLimitPercent ?? DEFAULT_HARD_LIMIT_PERCENT;
+  const ranked = plans.map((plan, order) => {
+    const state = headroom(plan.connectionKey);
+    // Over the hard limit can still answer; cooling down cannot.
+    const blocked = state.coolingDown
+      ? 2
+      : state.usedPercent !== undefined && state.usedPercent >= hardLimit
+        ? 1
+        : 0;
+    return {
+      plan,
+      order,
+      blocked,
+      known: state.usedPercent !== undefined,
+      room: state.usedPercent === undefined ? 0 : 100 - state.usedPercent,
+      preferred: plan.connectionKey === options.preferredConnectionKey,
+    };
   });
   ranked.sort(
     (a, b) =>
-      a.bucket - b.bucket ||
-      tierRank(a.tier) - tierRank(b.tier) ||
-      b.remaining - a.remaining ||
+      a.blocked - b.blocked ||
+      Number(b.known) - Number(a.known) ||
+      b.room - a.room ||
+      Number(b.preferred) - Number(a.preferred) ||
       a.order - b.order,
   );
-  return ranked.map(({ candidate, tier }) => ({
-    candidate,
-    tier,
-    thinkingLevel: thinkingForEffort(candidate.model, effort),
+  const anyKnown = ranked.some((entry) => entry.known);
+  return ranked.map(({ plan }) => ({
+    plan,
+    rung: plan.ladder[effort],
+    basis: plans.length === 1 ? "only-option" : anyKnown ? "usage" : "no-usage",
   }));
 }
 
-/** The thinking level that matches an effort, clamped to what the model offers. */
-export function thinkingForEffort(model: Model<Api>, effort: TaskEffort): string | null {
+/** Points a pick holds against its plan until the next usage reading, so bursts spread out. */
+export const BOOKED_POINTS: Readonly<Record<TaskEffort, number>> = {
+  low: 1,
+  medium: 2,
+  high: 4,
+  max: 6,
+};
+
+/**
+ * Raises a rated effort from the request's size: one level when it runs past 1,500 characters.
+ * What the request means is rated by a model, never by keywords.
+ */
+export function effortFloor(rated: TaskEffort, characters: number): TaskEffort {
+  const index = TASK_EFFORTS.indexOf(rated) + (characters > 1500 ? 1 : 0);
+  return TASK_EFFORTS[Math.min(index, TASK_EFFORTS.length - 1)]!;
+}
+
+/** The rung's thinking level, clamped to what the model offers. */
+export function rungThinkingLevel(model: Model<Api>, rung: LadderRung): string | null {
   if (!model.reasoning) return null;
   return clampCatalogThinkingLevel(
-    EFFORT_THINKING[effort],
+    rung.thinkingLevel,
     getSupportedThinkingLevels(model) as string[],
   );
 }
