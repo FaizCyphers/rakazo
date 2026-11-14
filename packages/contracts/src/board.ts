@@ -63,6 +63,8 @@ export const BoardSchema = z.object({
   spaceId: Id,
   name: z.string(),
   ticketPrefix: z.string(),
+  /** Checked tickets wait in review until a person moves them to done. */
+  requireSignOff: z.boolean(),
   createdAt: z.string(),
   updatedAt: z.string(),
 });
@@ -72,10 +74,15 @@ export const RenameBoardInput = z
   .object({
     name: z.string().trim().min(1).max(80).optional(),
     ticketPrefix: TicketPrefixSchema.optional(),
+    requireSignOff: z.boolean().optional(),
   })
-  .refine((value) => value.name !== undefined || value.ticketPrefix !== undefined, {
-    message: "Provide a name or ticketPrefix",
-  });
+  .refine(
+    (value) =>
+      value.name !== undefined ||
+      value.ticketPrefix !== undefined ||
+      value.requireSignOff !== undefined,
+    { message: "Provide a name, ticketPrefix or requireSignOff" },
+  );
 export type RenameBoardInput = z.infer<typeof RenameBoardInput>;
 
 export const TicketCommentSchema = z.object({

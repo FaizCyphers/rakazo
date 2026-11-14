@@ -934,6 +934,8 @@ export interface BackgroundJobPayloads {
   "media.poll": { jobId: string };
   /** Read an Expo push receipt; the token is identified by its digest, never stored. */
   "push.receipt": { userId: string; ticketId: string; tokenDigest: string };
+  /** Backup for checking a finished run's work against its ticket. */
+  "ticket.verify": { runId: string };
 }
 
 export type BackgroundJobName = keyof BackgroundJobPayloads;

@@ -9,6 +9,7 @@ import {
   TicketStatusSchema,
 } from "@rakazo/contracts";
 import type { Prisma, PrismaClient } from "@rakazo/db";
+import { coerceTicketAcceptance } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 
 const COMPLETED_STATUSES = TICKET_STATUSES.filter(isTicketCompletedStatus);
@@ -24,10 +25,17 @@ export async function waitsOnIncomplete(
   return open > 0;
 }
 
-/** Assignment wakes only its current owner, without posting a chat message. */
+/** What the working bot is told when its ticket's work will be checked as its run ends. */
+export const TICKET_VERIFY_NOTICE =
+  "When your run ends, your work is checked against the ticket's acceptance steps and the ticket is finished for you. End your reply with a short Verification section listing each step as PASS or FAIL with evidence.";
+
+/**
+ * Assignment wakes only its current owner, without posting a chat message. `note` follows the
+ * prompt, such as what a check of the last run found not done.
+ */
 export async function wakeTicketAssignee(
   deps: { prisma: PrismaClient; jobs: JobPublisher; deploymentLabs?: readonly LabFeature[] },
-  input: { spaceId: string; ticketId: string; botId: string },
+  input: { spaceId: string; ticketId: string; botId: string; note?: string },
 ): Promise<void> {
   const run = await deps.prisma.$transaction(async (tx) => {
     const ticket = await tx.ticket.findFirst({
@@ -46,14 +54,22 @@ export async function wakeTicketAssignee(
     if (!bot?.thread) return null;
     const owner = await tx.user.findUnique({ where: { id: bot.userId }, select: { labs: true } });
     if (!hasLab(resolveLabs(owner?.labs, deps.deploymentLabs), "board")) return null;
+    const checked =
+      Boolean(ticket.doneWhen) || coerceTicketAcceptance(ticket.acceptance).length > 0;
+    const prompt = [
+      `Work on ticket ${ticket.board.ticketPrefix}-${ticket.number}. Read it with ticket_get. Keep progress in ticket comments and update its status with ticket_update. Use ask or approval cards when user input is needed.`,
+      ...(checked ? [TICKET_VERIFY_NOTICE] : []),
+      ...(input.note ? [input.note] : []),
+    ].join("\n\n");
     const task = await tx.task.create({
       data: {
         spaceId: input.spaceId,
         botId: bot.id,
         threadId: bot.thread.id,
         userId: bot.userId,
-        prompt: `Work on ticket ${ticket.board.ticketPrefix}-${ticket.number}. Read it with ticket_get. Keep progress in ticket comments and update its status with ticket_update. Use ask or approval cards when user input is needed.`,
+        prompt,
         status: "queued",
+        ticketId: ticket.id,
       },
     });
     return tx.run.create({

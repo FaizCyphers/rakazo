@@ -9,6 +9,8 @@ export type TicketChange = {
   ticketId: string;
   assigneeBotId: string | null;
   wakeAssignee: boolean;
+  /** Added to the wake's prompt. */
+  wakeNote?: string;
 };
 export type TicketChangeNotifier = (change: TicketChange) => Promise<void>;
 
@@ -30,6 +32,7 @@ export function createTicketChangeNotifier(deps: {
         spaceId: change.spaceId,
         ticketId: change.ticketId,
         botId: change.assigneeBotId,
+        ...(change.wakeNote ? { note: change.wakeNote } : {}),
       });
     }
   };

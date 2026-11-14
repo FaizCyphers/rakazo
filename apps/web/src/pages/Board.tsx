@@ -21,6 +21,7 @@ import {
   Input,
   NativeSelect,
   NativeSelectOption,
+  Switch,
   Textarea,
 } from "@rakazo/ui-web";
 import { skipToken, useQuery, useQueryClient } from "@tanstack/react-query";
@@ -43,12 +44,22 @@ export function BoardPage() {
   const ticketsOptions = queries.tickets.list.queryOptions({ input: {} });
   const ticketsQuery = useQuery(ticketsOptions);
   const botsQuery = useQuery(queries.bots.list.queryOptions());
+  const boardOptions = queries.boards.get.queryOptions();
+  const board = useQuery(boardOptions).data;
+  const signOffId = useId();
   const tickets = ticketsQuery.data?.tickets ?? [];
   const bots = botsQuery.data ?? [];
   const [selected, setSelected] = useState<Ticket | "new" | null>(null);
   const [streamError, setError] = useState("");
   const loadFailed = ticketsQuery.error ?? botsQuery.error;
   const error = streamError || (loadFailed ? errorText(loadFailed) : "");
+  const setSignOff = async (requireSignOff: boolean) => {
+    try {
+      queryClient.setQueryData(boardOptions.queryKey, await rpc.boards.rename({ requireSignOff }));
+    } catch (cause) {
+      setError(errorText(cause));
+    }
+  };
   /** A read sent after a change, so an older one in flight cannot bring back the old board. */
   const reload = () => fetchFresh(queryClient, ticketsOptions).then(() => undefined);
 
@@ -125,6 +136,20 @@ export function BoardPage() {
         <h1 className="flex-1 font-medium">
           <Trans>Board</Trans>
         </h1>
+        {board ? (
+          <label
+            htmlFor={signOffId}
+            className="flex items-center gap-2 text-body text-foreground/75"
+          >
+            <Switch
+              id={signOffId}
+              size="sm"
+              checked={board.requireSignOff}
+              onCheckedChange={(checked) => void setSignOff(checked)}
+            />
+            <Trans>Require sign-off</Trans>
+          </label>
+        ) : null}
         <Button onClick={() => setSelected("new")} disabled={bots.length === 0}>
           <Trans>New ticket</Trans>
         </Button>
