@@ -62,6 +62,28 @@ export function BoardPage() {
   };
   /** A read sent after a change, so an older one in flight cannot bring back the old board. */
   const reload = () => fetchFresh(queryClient, ticketsOptions).then(() => undefined);
+  const [dragging, setDragging] = useState<Ticket | null>(null);
+  const [dropStatus, setDropStatus] = useState<TicketStatus | null>(null);
+  const moveTicket = async (ticket: Ticket, status: TicketStatus) => {
+    if (ticket.status === status) return;
+    // Shown in its new column at once; the read after the move settles what the server kept.
+    queryClient.setQueryData(ticketsOptions.queryKey, (current) =>
+      current
+        ? {
+            ...current,
+            tickets: current.tickets.map((item) =>
+              item.id === ticket.id ? { ...item, status } : item,
+            ),
+          }
+        : current,
+    );
+    try {
+      await rpc.tickets.move({ id: ticket.id, status });
+    } catch (cause) {
+      setError(errorText(cause));
+    }
+    await reload();
+  };
 
   useEffect(() => {
     let currentController: AbortController | undefined;
@@ -162,7 +184,33 @@ export function BoardPage() {
       <main className="relative min-h-0 min-w-0 flex-1 overflow-auto p-4">
         <div data-testid="board-columns" className="flex min-h-full gap-3">
           {TICKET_STATUSES.map((status) => (
-            <section key={status} className="min-w-40 flex-1 space-y-2">
+            <div
+              key={status}
+              role="group"
+              aria-label={statuses[status]}
+              data-testid={`board-column-${status}`}
+              className={`min-w-40 flex-1 space-y-2 rounded-lg ${
+                dropStatus === status ? "bg-muted" : ""
+              }`}
+              onDragOver={(event) => {
+                if (!dragging || dragging.status === status) return;
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                setDropStatus(status);
+              }}
+              onDragLeave={(event) => {
+                if (!event.currentTarget.contains(event.relatedTarget as Node | null)) {
+                  setDropStatus((current) => (current === status ? null : current));
+                }
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const ticket = dragging;
+                setDragging(null);
+                setDropStatus(null);
+                if (ticket) void moveTicket(ticket, status);
+              }}
+            >
               <h2 className="px-1 text-body font-medium">{statuses[status]}</h2>
               {tickets
                 .filter((ticket) => ticket.status === status)
@@ -171,7 +219,19 @@ export function BoardPage() {
                     key={ticket.id}
                     data-testid={`board-card-${ticket.id}`}
                     variant="outline"
-                    className="h-auto w-full flex-col items-start gap-1 whitespace-normal p-3 text-left font-normal"
+                    className={`h-auto w-full cursor-grab flex-col items-start gap-1 whitespace-normal p-3 text-left font-normal ${
+                      dragging?.id === ticket.id ? "opacity-50" : ""
+                    }`}
+                    draggable
+                    onDragStart={(event) => {
+                      event.dataTransfer.effectAllowed = "move";
+                      event.dataTransfer.setData("text/plain", ticket.ref);
+                      setDragging(ticket);
+                    }}
+                    onDragEnd={() => {
+                      setDragging(null);
+                      setDropStatus(null);
+                    }}
                     onClick={() => setSelected(ticket)}
                   >
                     <span className="text-label text-muted-foreground">{ticket.ref}</span>
@@ -181,7 +241,7 @@ export function BoardPage() {
                     </span>
                   </Button>
                 ))}
-            </section>
+            </div>
           ))}
         </div>
         {tickets.length === 0 && !error ? (
