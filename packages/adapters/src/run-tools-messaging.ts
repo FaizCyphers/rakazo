@@ -335,6 +335,7 @@ export const messagingTools: ToolHandlers = {
       ok: true,
       botId: sent.botId,
       name: sent.name,
+      ...("ticket" in sent ? { ticket: sent.ticket } : {}),
       note: sent.note,
     });
   },

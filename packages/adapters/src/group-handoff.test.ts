@@ -57,6 +57,8 @@ function harness(
     },
   };
   const prisma = {
+    // No board lab: handoffs are not tracked.
+    bot: { findFirst: vi.fn(async () => null) },
     $transaction: vi.fn(async (callback: (value: typeof tx) => Promise<unknown>) => callback(tx)),
   } as unknown as PrismaClient;
   return {

@@ -31,6 +31,7 @@ import type { TakeoverResumeCheckpoint } from "./takeover-resume.js";
 import { continueRunClaimFence, TAKEOVER_RESUME_CHECKPOINTS } from "./takeover-resume.js";
 import type { TicketRecoveryApplied } from "./ticket-recovery.js";
 import { finishTicketRecovery, recordTicketRunFailure } from "./ticket-recovery.js";
+import { markTicketStarted } from "./ticket-wake.js";
 
 /**
  * Avoid an expensive remote workspace export when a turn never touched the computer. A failed
@@ -450,6 +451,7 @@ export async function claimRun(
     data: { status: "running" },
   });
   if (started.count !== 1) return undefined;
+  await markTicketStarted(deps, run.id).catch((error) => getLogger().error("ticket start", error));
   return { fence, current };
 }
 

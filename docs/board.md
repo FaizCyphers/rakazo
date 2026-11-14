@@ -15,6 +15,16 @@ Assign a ticket to a bot and it starts working on it. Bots can also create, upda
 tickets themselves. Ticket work stays out of your chats, but a bot that needs you still posts a
 card in its chat.
 
+A ticket assigned to a bot moves to **In progress** as soon as its bot starts on it.
+
+When one of your bots asks another to do something, by messaging it with a request or handing
+work off in a group, the server tracks the work as a ticket in **In progress**, owned by the bot
+that was asked. A message that names an open ticket already owned by that bot is tracked on that
+ticket instead. Both bots are told the ticket's number, and the bot that was asked keeps progress
+in its comments and moves it on when finished. Results, questions, status updates and FYIs are
+not tracked. A delegated ticket whose run ended with nothing to check is left to its bot rather
+than started again.
+
 A ticket can wait on other tickets on the same board. It starts only once every ticket it waits
 on is **Done** or **Won't do**, and then its bot is woken right away. A ticket can also say what
 done means and list acceptance steps; the ticket shows these, and so does the context of the bot

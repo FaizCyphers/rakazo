@@ -11,6 +11,7 @@ import {
 import type { Prisma, PrismaClient } from "@rakazo/db";
 import { coerceTicketAcceptance } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import type { TicketChangeNotifier } from "./ticket-changes.js";
 
 const COMPLETED_STATUSES = TICKET_STATUSES.filter(isTicketCompletedStatus);
 
@@ -88,4 +89,31 @@ export async function wakeTicketAssignee(
   await deps.jobs.enqueue(runContinueJob(run.id)).catch((error) => {
     getLogger().warn("ticket wake deferred to reconciliation", error);
   });
+}
+
+/**
+ * As a ticket's run starts, a ticket still in To do moves to In progress, so the board shows
+ * the work started without the bot moving it. A repeat finds it moved already.
+ */
+export async function markTicketStarted(
+  deps: { prisma: PrismaClient; onTicketChange?: TicketChangeNotifier },
+  runId: string,
+): Promise<void> {
+  const moved = await deps.prisma.$queryRaw<
+    Array<{ id: string; boardId: string; spaceId: string; assigneeBotId: string }>
+  >`
+    UPDATE tickets t SET status = 'doing', "updatedAt" = now()
+    FROM runs r JOIN tasks k ON k.id = r."taskId"
+    WHERE r.id = ${runId} AND k."ticketId" = t.id AND t.status = 'todo'
+      AND t."assigneeBotId" = r."botId"
+    RETURNING t.id, t."boardId", t."spaceId", t."assigneeBotId"`;
+  for (const ticket of moved) {
+    await deps.onTicketChange?.({
+      spaceId: ticket.spaceId,
+      boardId: ticket.boardId,
+      ticketId: ticket.id,
+      assigneeBotId: ticket.assigneeBotId,
+      wakeAssignee: false,
+    });
+  }
 }

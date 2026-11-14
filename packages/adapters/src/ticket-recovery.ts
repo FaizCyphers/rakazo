@@ -11,7 +11,7 @@ import {
   isTicketRetryKind,
   TICKET_RETRY_WAKE_NOTE,
 } from "@rakazo/core";
-import { Prisma } from "@rakazo/db";
+import { coerceTicketAcceptance, Prisma } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
 import type { ExecutorDeps } from "./executor-deps.js";
 import { notifyRun } from "./run-notifications.js";
@@ -36,8 +36,25 @@ function latestTicketRun(tx: Tx, ticketId: string) {
   return tx.run.findFirst({
     where: { task: { ticketId } },
     orderBy: [{ createdAt: "desc" }, { id: "desc" }],
-    select: { id: true, status: true, error: true },
+    select: { id: true, status: true, error: true, trigger: true },
   });
+}
+
+/**
+ * A delegated ticket's run was started by the message that asked for the work, and that bot
+ * was asked to close the ticket itself. Once that run completes, a ticket with no steps to check
+ * is left as it is rather than woken again.
+ */
+function leftToDelegate(
+  latest: { status: string; trigger: string } | null,
+  ticket: { doneWhen: string | null; acceptance: unknown },
+): boolean {
+  return (
+    latest?.status === "completed" &&
+    latest.trigger !== "tickets" &&
+    !ticket.doneWhen &&
+    coerceTicketAcceptance(ticket.acceptance).length === 0
+  );
 }
 
 function hasLiveTicketRun(tx: Tx, ticketId: string) {
@@ -81,6 +98,7 @@ export async function decideStuckTicket(
   const ticket = await lockWorkableTicket(tx, ticketId);
   if (!ticket) return null;
   const latest = await latestTicketRun(tx, ticket.id);
+  if (leftToDelegate(latest, ticket)) return null;
   const runId = latest?.id ?? null;
   const prior = coerceTicketRecovery(ticket.recovery);
   const seen = prior?.runId === runId;
@@ -222,7 +240,7 @@ export async function sweepStuckTickets(deps: ExecutorDeps): Promise<number> {
     JOIN bots b ON b.id = t."assigneeBotId"
     JOIN "user" u ON u.id = b."userId"
     LEFT JOIN LATERAL (
-      SELECT r.id, r.status, r.error FROM tasks k JOIN runs r ON r."taskId" = k.id
+      SELECT r.id, r.status, r.error, r.trigger FROM tasks k JOIN runs r ON r."taskId" = k.id
       WHERE k."ticketId" = t.id
       ORDER BY r."createdAt" DESC, r.id DESC LIMIT 1
     ) latest ON TRUE
@@ -240,6 +258,11 @@ export async function sweepStuckTickets(deps: ExecutorDeps): Promise<number> {
       AND (t.verification IS NULL OR t.verification->>'state' IS DISTINCT FROM 'pending')
       AND NOT ((t.recovery->>'kind') IS NOT NULL AND (t.recovery->>'runId') IS NOT DISTINCT FROM latest.id)
       AND NOT (latest.status = 'cancelled' AND COALESCE(latest.error, '') = '')
+      AND NOT (
+        latest.status = 'completed' AND latest.trigger <> 'tickets'
+        AND COALESCE(t."doneWhen", '') = ''
+        AND COALESCE(CASE WHEN jsonb_typeof(t.acceptance) = 'array' THEN jsonb_array_length(t.acceptance) END, 0) = 0
+      )
     ORDER BY t."updatedAt" ASC
     LIMIT ${SWEEP_BATCH}`;
   let decided = 0;

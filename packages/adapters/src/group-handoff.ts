@@ -20,11 +20,20 @@ import {
   touchGroupUpdatedAt,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import {
+  delegationBoard,
+  delegationNotice,
+  showDelegationTicket,
+  trackDelegation,
+} from "./delegation-tickets.js";
 import type { ExecutorDeps } from "./executor-deps.js";
 import { runLeaseFor } from "./run-messages.js";
 
 export async function handoffToGroupBot(
-  deps: Pick<ExecutorDeps, "prisma" | "events" | "jobs" | "runLease">,
+  deps: Pick<
+    ExecutorDeps,
+    "prisma" | "events" | "jobs" | "runLease" | "onTicketChange" | "deploymentLabs"
+  >,
   run: {
     id: string;
     spaceId: string;
@@ -47,6 +56,8 @@ export async function handoffToGroupBot(
     return { error: `message must contain 1 to ${BOT_MESSAGE_MAX_LENGTH} characters` } as const;
   }
   if (text.length > BOT_MESSAGE_MAX_LENGTH) return { error: BOT_MESSAGE_TOO_LONG } as const;
+  // A handoff is delegated work, tracked as a ticket on the board.
+  const board = await delegationBoard(deps, { spaceId: run.spaceId, botId: run.botId });
   const committed = await deps.prisma.$transaction(async (tx) => {
     try {
       await lockSpaceGroup(tx, run, groupId);
@@ -129,6 +140,7 @@ export async function handoffToGroupBot(
         threadId: targetThreadId,
         inGroup,
         groupName: group.name,
+        ticket: null,
       } as const;
     }
 
@@ -168,11 +180,21 @@ export async function handoffToGroupBot(
       } as const;
     }
 
+    const ticket = board
+      ? await trackDelegation(tx, board, {
+          spaceId: run.spaceId,
+          userId: run.userId,
+          fromBotId: run.botId,
+          toBotId: targetId,
+          message: text,
+        })
+      : null;
+    const delivered = ticket ? `${delegationNotice(ticket)}\n\n${text}` : text;
     const handoffBlock: MessageBlock = {
       kind: "handoff",
       fromBotId: run.botId,
       toBotId: targetId,
-      text,
+      text: delivered,
       hop,
     };
     const message = await createThreadMessageInTransaction(tx, {
@@ -190,8 +212,10 @@ export async function handoffToGroupBot(
         botId: targetId,
         threadId: targetThreadId,
         userId: run.userId,
-        prompt: text,
+        prompt: delivered,
         status: "queued",
+        // The run this starts is the ticket's run: it is checked, recovered and shown there.
+        ticketId: ticket?.id,
       },
     });
     const nextRun = await tx.run.create({
@@ -217,7 +241,7 @@ export async function handoffToGroupBot(
         messageId: message.id,
         fromBotId: run.botId,
         toBotId: targetId,
-        text,
+        text: delivered,
       },
     });
     await touchGroupUpdatedAt(tx, groupId);
@@ -229,6 +253,7 @@ export async function handoffToGroupBot(
       threadId: targetThreadId,
       inGroup,
       groupName: group.name,
+      ticket,
     } as const;
   }, THREAD_LOCK_TRANSACTION_OPTIONS);
   if ("error" in committed) return committed;
@@ -239,15 +264,20 @@ export async function handoffToGroupBot(
     // The queued run is durable and the job reconciler will repair a missed immediate wake.
     getLogger().error("group handoff enqueue", error);
   });
+  const { ticket } = committed;
+  if (ticket) await showDelegationTicket(deps, run.spaceId, ticket, committed.botId);
   return {
     ok: true,
     botId: committed.botId,
     runId: committed.runId,
     groupId,
     groupName: committed.groupName,
-    note: committed.inGroup
-      ? "Handoff recorded. End this turn without narrating it; the next bot owns the next stage."
-      : "Handoff recorded in the selected group. The next bot will reply there. Continue any independent work.",
+    ...(ticket ? { ticket: ticket.ref } : {}),
+    note: `${ticket ? `Tracked as ${ticket.ref}. ` : ""}${
+      committed.inGroup
+        ? "Handoff recorded. End this turn without narrating it; the next bot owns the next stage."
+        : "Handoff recorded in the selected group. The next bot will reply there. Continue any independent work."
+    }`,
   };
 }
 
