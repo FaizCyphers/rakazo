@@ -12,6 +12,7 @@ import {
   expandSkillReferencesInPrompt,
   isOneShotRoutineCrons,
   nextRoutineRunDateAcross,
+  routineNextRunBeforeEnd,
 } from "@rakazo/core";
 import {
   accountDeactivated,
@@ -25,6 +26,7 @@ import { protectedComputerLifecycleRefusal } from "./desktop-command-guard.js";
 import type { ExecutorDeps } from "./executor-deps.js";
 import { routineRunModelPin } from "./model-selection.js";
 import { findPendingRoutineTick, routineTimerNonce } from "./routine-coalescing.js";
+import { endRoutine, routineEndDue } from "./routine-end.js";
 import { nextRoutineWatchAt, parseRoutineWatch, tickRoutineWatch } from "./routine-watch.js";
 import { notifyRun } from "./run-notifications.js";
 import { listAgentSkillRecords } from "./skill-tools.js";
@@ -143,18 +145,25 @@ export async function wakeRoutine(deps: ExecutorDeps, routineId: string, schedul
   )
     return;
   if (await deferFutureRoutine(deps.jobs, routineId, scheduledAt)) return;
+  const ending = await routineEndDue(deps.prisma, routine, scheduledAt);
+  if (ending) {
+    await endRoutine(deps, routine, ending, scheduledAt);
+    return;
+  }
   if (await accountDeactivated(deps.prisma, routine.userId)) {
     // A deactivated owner's routine skips this occurrence without running. A recurring or
     // watching one keeps its schedule, so it runs again once the owner is back; a one-time
     // one is spent. A watch that no longer parses keeps the default interval, so the normal
     // path reports it once the owner is back.
-    const nextRunAt =
+    const nextRunAt = routineNextRunBeforeEnd(
       routine.watch == null
         ? nextScheduledRunAt(routine, scheduledAt)
         : nextRoutineWatchAt(
             parseRoutineWatch(routine.watch) ?? { everyMinutes: ROUTINE_WATCH_DEFAULT_MINUTES },
             new Date(Math.max(Date.now(), scheduledAt.getTime())),
-          );
+          ),
+      routine.endsAt,
+    );
     const skipped = await deps.prisma.routine.updateMany({
       where: { id: routine.id, active: true, nextRunAt: scheduledAt },
       data: { nextRunAt, ...(nextRunAt ? {} : { active: false }) },
@@ -210,7 +219,10 @@ export async function wakeRoutine(deps: ExecutorDeps, routineId: string, schedul
   // legacy row accepted before cron validation was added) fires the
   // already-due run once, then nextRunAt stays null and the routine
   // pauses rather than crash-looping the wakeup job.
-  const nextRunAt = watchTick?.run ? watchTick.nextRunAt : nextScheduledRunAt(routine, scheduledAt);
+  const nextRunAt = routineNextRunBeforeEnd(
+    watchTick?.run ? watchTick.nextRunAt : nextScheduledRunAt(routine, scheduledAt),
+    routine.endsAt,
+  );
   const skillRecords = await listAgentSkillRecords(deps.prisma, {
     spaceId: routine.spaceId,
     userId: routine.userId,

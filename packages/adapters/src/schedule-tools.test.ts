@@ -2,6 +2,7 @@ import { routineWakeupJob } from "@rakazo/adapter-kit";
 import { ONCE_ROUTINE_CRON } from "@rakazo/core";
 import { Prisma } from "@rakazo/db";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { selectBuiltinToolsForRun } from "./run-tool-selection.js";
 import {
   cancelScheduleFromTool,
   changeUserTimezone,
@@ -13,6 +14,7 @@ import {
   isOneShotRoutineCron,
   listSchedulesFromTool,
   MAX_ACTIVE_ROUTINES_PER_BOT,
+  resolveRoutineEnd,
   resolveScheduleTiming,
   SCHEDULE_TOOL_NAMES,
   scheduleCreateError,
@@ -1700,5 +1702,106 @@ describe("changeUserTimezone", () => {
 
     expect(user.timezone).toBeNull();
     expect(rows[0]).toMatchObject({ timezone: "Africa/Cairo" });
+  });
+});
+
+describe("routine end arguments", () => {
+  beforeEach(() => vi.useFakeTimers({ now: new Date("2026-10-20T12:00:00Z") }));
+  afterEach(() => vi.useRealTimers());
+
+  it("reads endsAt in the routine's timezone and trims until", () => {
+    expect(
+      resolveRoutineEnd(
+        { until: "  the PR is merged ", endsAt: "2026-10-27T09:00" },
+        "Europe/Paris",
+      ),
+    ).toEqual({
+      ok: true,
+      until: "the PR is merged",
+      endsAt: new Date("2026-10-27T08:00:00Z"),
+    });
+    expect(resolveRoutineEnd({ until: "", endsAt: null }, "UTC")).toEqual({ ok: true });
+  });
+
+  it("refuses a past, far or malformed end time and an overlong condition", () => {
+    expect(resolveRoutineEnd({ endsAt: "2026-10-19T09:00Z" }, "UTC")).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("endsAt must be in the future."),
+    });
+    expect(resolveRoutineEnd({ endsAt: "2027-12-01T09:00Z" }, "UTC")).toMatchObject({
+      ok: false,
+      error: expect.stringContaining("endsAt must be within a year."),
+    });
+    expect(resolveRoutineEnd({ endsAt: "next week" }, "UTC")).toEqual({
+      ok: false,
+      error: "endsAt must be a valid ISO datetime.",
+    });
+    expect(resolveRoutineEnd({ until: "x".repeat(501) }, "UTC")).toEqual({
+      ok: false,
+      error: "until must be 1 to 500 characters.",
+    });
+  });
+
+  it("saves the end on a new routine and refuses one that ends before its first run", async () => {
+    const create = vi.fn(async (args: { data: Record<string, unknown> }) => ({
+      id: "routine-1",
+      ...args.data,
+    }));
+    const deps = {
+      prisma: accountZonePrisma({ routine: { create, findMany: noRoutines } }, null),
+      events: { append: vi.fn(async () => undefined) },
+      jobs: { enqueue: vi.fn(async () => undefined) },
+    } as unknown as Parameters<typeof createScheduleFromTool>[0];
+    const input = {
+      spaceId: "ws-1",
+      botId: "bot-1",
+      userId: "user-1",
+      threadId: "thread-1",
+      name: "PR watch",
+      prompt: "Check the PR",
+      schedule: { cron: "0 9 * * *" },
+    };
+
+    await expect(
+      createScheduleFromTool(deps, {
+        ...input,
+        end: { until: "the PR is merged", endsAt: "2026-10-25T00:00Z" },
+      }),
+    ).resolves.toMatchObject({ ok: true, until: "the PR is merged" });
+    expect(create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          until: "the PR is merged",
+          endsAt: new Date("2026-10-25T00:00:00Z"),
+        }),
+      }),
+    );
+
+    create.mockClear();
+    await expect(
+      createScheduleFromTool(deps, { ...input, end: { endsAt: "2026-10-21T08:00Z" } }),
+    ).resolves.toEqual({
+      error: expect.stringContaining("endsAt must be after the first run"),
+    });
+    expect(create).not.toHaveBeenCalled();
+  });
+});
+
+describe("schedule_finish", () => {
+  const offered = (trigger: string, routineUntil: boolean) =>
+    selectBuiltinToolsForRun({
+      graphicalToolsAllowed: false,
+      groupId: null,
+      trigger,
+      semanticMemoryEnabled: false,
+      messagingChannelRun: false,
+      routineUntil,
+    }).some((tool) => tool.name === "schedule_finish");
+
+  it("is offered only to a run of a routine with a done condition", () => {
+    expect(offered("routine", true)).toBe(true);
+    expect(offered("routine", false)).toBe(false);
+    expect(offered("user", true)).toBe(false);
+    expect(offered("user", false)).toBe(false);
   });
 });

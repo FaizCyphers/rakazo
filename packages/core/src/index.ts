@@ -94,6 +94,7 @@ export * from "./retry-policy.js";
 export * from "./room-settings.js";
 export * from "./routine-dispatch.js";
 export * from "./routine-draft.js";
+export * from "./routine-end.js";
 export * from "./routine-mention-batcher.js";
 export * from "./routine-runs.js";
 export * from "./run-error.js";

@@ -1540,6 +1540,12 @@ model Routine {
   nextRunAt      DateTime?
   /// Runs in a row the model provider refused for the account; each one spaces out the schedule.
   accountFailures Int      @default(0)
+  /// After this the routine turns itself off instead of running; null runs until turned off.
+  endsAt         DateTime?
+  /// What its runs check for; a run that finds it true turns the routine off (schedule_finish).
+  until          String?
+  /// When the routine last turned itself off; earlier runs no longer count as failures in a row.
+  endedAt        DateTime?
   createdAt      DateTime  @default(now())
   updatedAt      DateTime  @updatedAt
   runs           Run[]

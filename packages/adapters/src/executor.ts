@@ -19,6 +19,7 @@ import {
   promptInvokesSkill,
   redactSecrets,
   renderBotDirectory,
+  routineUntilInstruction,
   userTurnMessageForRun,
 } from "@rakazo/core";
 import type { ThreadEvents } from "@rakazo/db";
@@ -1381,6 +1382,15 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
                 return null;
               })),
         );
+        // A routine with a done condition: its runs check it and may turn the routine off.
+        const routineUntil =
+          run.trigger === "routine" && run.routineId
+            ? await deps.prisma.routine
+                .findUnique({ where: { id: run.routineId }, select: { until: true } })
+                .then((routine) => routine?.until ?? null)
+                // Optional context; a lookup failure must not prevent a run.
+                .catch(() => null)
+            : null;
         const builtins = [
           ...selectBuiltinToolsForRun({
             ticketBoardEnabled,
@@ -1415,6 +1425,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
             emailClaimable:
               Boolean(deps.inboundEmailDomain) && !emailName && run.userId === bot.userId,
             emailSend: Boolean(deps.email),
+            routineUntil: Boolean(routineUntil),
           }),
           // Cross-owner agent connections only exist for chat-linked bots. The chat link is its
           // creator's, and a connected agent's messages run as them, so only their runs may
@@ -1748,6 +1759,9 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
           // Per-turn, not in the system prompt: the timestamp changes every call and would break the cacheable prefix.
           formatCurrentTimeInstruction(deps.now?.() ?? new Date(), userTimeZone),
           lateRoutineNote,
+          routineUntil && !disabledBuiltinTools.has("schedule_finish")
+            ? routineUntilInstruction(routineUntil)
+            : undefined,
           sharedSpaceNote,
         ]
           .filter(Boolean)

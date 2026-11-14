@@ -68,6 +68,18 @@ Runs when the bot receives a message in Slack. Needs [Slack connected](./messagi
 > that change something are checked even if they never ask in your own chats, and a purchase is
 > refused. Always allow on a tool such as shell or the browser lets outside text use it freely.
 
+## Ending on its own
+
+Ask for a routine that stops by itself, such as "check the deploy every 10 minutes until it's
+live" or "watch this page until Friday". A scheduled or change-watching routine can have:
+
+- An **end time**, at most a year away. The routine runs for the last time before it.
+- A **condition**. Each run checks it, and the run that finds it true turns the routine off.
+
+Either one also turns the routine off after three failed runs in a row. When a routine ends, its
+chat says why. The routine's settings show its end time and condition; ask the bot to change them.
+Turning an ended routine back on drops an end time that has passed.
+
 ## Test, pause and review
 
 - **Test run** runs a saved routine now.
@@ -78,7 +90,7 @@ Runs when the bot receives a message in Slack. Needs [Slack connected](./messagi
 ## On mobile
 
 The mobile app lists a bot's routines from its profile. Tap **+** to create one. Tapping a routine
-shows its instruction, schedule, next run and run history, with a switch to pause it and a button to
+shows its instruction, schedule, next run, end time and condition, and run history, with a switch to pause it and a button to
 test it; **Edit routine** changes its name, instruction and schedules, or deletes it. Webhook, Git event, Slack
 message and change triggers, and a routine's own model, are set up in chat or the web or desktop
 app; mobile shows them and keeps them as they are.

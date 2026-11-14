@@ -1,7 +1,14 @@
 import type { ConnectorProvider, JobPublisher } from "@rakazo/adapter-kit";
 import { routineJobKey, routineWakeupJob } from "@rakazo/adapter-kit";
 import type { RoutineWatch } from "@rakazo/contracts";
-import { ROUTINE_WATCH_MIN_MINUTES, RoutineWatchSchema, TimeZoneSchema } from "@rakazo/contracts";
+import {
+  ROUTINE_UNTIL_MAX_LENGTH,
+  ROUTINE_WATCH_MIN_MINUTES,
+  RoutineEndsAtSchema,
+  RoutineUntilSchema,
+  RoutineWatchSchema,
+  TimeZoneSchema,
+} from "@rakazo/contracts";
 import {
   cronFromPreset,
   formatCron,
@@ -10,6 +17,7 @@ import {
   nextCronDate,
   nextCronDateAcross,
   ONCE_ROUTINE_CRON,
+  routineNextRunBeforeEnd,
   unevenInterval,
   wallClock,
   zonedDateTime,
@@ -29,6 +37,7 @@ export const SCHEDULE_TOOL_NAMES = new Set([
   "schedule_list",
   "schedule_update",
   "schedule_cancel",
+  "schedule_finish",
 ]);
 
 /** Routine runs may create, list, or cancel routines, but may not update them. */
@@ -259,6 +268,56 @@ export function describeRoutineTiming(row: {
       ? (localDateTime(row.nextRunAt, row.timezone) ?? row.nextRunAt.toISOString())
       : null,
   };
+}
+
+/** A routine's end time and condition as the bot should report them, when it has them. */
+export function describeRoutineEnd(row: {
+  timezone: string;
+  endsAt: Date | null;
+  until: string | null;
+}) {
+  return {
+    ...(row.endsAt
+      ? { endsAt: localDateTime(row.endsAt, row.timezone) ?? row.endsAt.toISOString() }
+      : {}),
+    ...(row.until ? { until: row.until } : {}),
+  };
+}
+
+/** A schedule tool call's `until` and `endsAt`. */
+export type RoutineEndArgs = { until?: unknown; endsAt?: unknown };
+
+/** `until` and `endsAt` of a schedule tool call, checked; an endsAt without an offset is read in `timezone`. */
+export function resolveRoutineEnd(
+  input: RoutineEndArgs,
+  timezone: string,
+): { ok: true; until?: string; endsAt?: Date } | { ok: false; error: string } {
+  let until: string | undefined;
+  if (isScheduleValueProvided(input.until)) {
+    const parsed = RoutineUntilSchema.safeParse(String(input.until));
+    if (!parsed.success) {
+      return { ok: false, error: `until must be 1 to ${ROUTINE_UNTIL_MAX_LENGTH} characters.` };
+    }
+    until = parsed.data;
+  }
+  let endsAt: Date | undefined;
+  if (isScheduleValueProvided(input.endsAt)) {
+    const at = zonedDateTime(String(input.endsAt), timezone);
+    if (!at) return { ok: false, error: "endsAt must be a valid ISO datetime." };
+    const parsed = RoutineEndsAtSchema.safeParse(at);
+    if (!parsed.success) {
+      const issues = parsed.error.issues.map((issue) => issue.message).join("; ");
+      return { ok: false, error: `${issues} ${nowIn(timezone)}` };
+    }
+    endsAt = parsed.data;
+  }
+  return { ok: true, until, endsAt };
+}
+
+/** Why an end time leaves a new routine no run at all. */
+function endsBeforeFirstRun(endsAt: Date | undefined, firstRunAt: Date, timezone: string) {
+  if (!endsAt || endsAt.getTime() > firstRunAt.getTime()) return undefined;
+  return `endsAt must be after the first run, ${localDateTime(firstRunAt, timezone) ?? firstRunAt.toISOString()}.`;
 }
 
 function validateRepeatingCron(cron: string): string | null {
@@ -492,6 +551,7 @@ export async function createScheduleFromTool(
     prompt: string;
     timezone?: string;
     schedule: Record<string, unknown>;
+    end?: RoutineEndArgs;
   },
 ) {
   const routineBotId = input.target?.botId ?? input.botId;
@@ -524,6 +584,10 @@ export async function createScheduleFromTool(
   const insertRoutine = (client: Pick<Prisma.TransactionClient, "routine">, timezone: string) => {
     const resolved = resolveScheduleTiming(input.schedule, timezone);
     if (!resolved.ok) return { error: resolved.error } as const;
+    const end = resolveRoutineEnd(input.end ?? {}, timezone);
+    if (!end.ok) return { error: end.error } as const;
+    const endError = endsBeforeFirstRun(end.endsAt, resolved.nextRunAt, timezone);
+    if (endError) return { error: endError } as const;
     wakeAt = resolved.nextRunAt;
     return client.routine.create({
       data: {
@@ -538,6 +602,8 @@ export async function createScheduleFromTool(
         notify: true,
         active: true,
         nextRunAt: resolved.nextRunAt,
+        until: end.until,
+        endsAt: end.endsAt,
       },
     });
   };
@@ -585,6 +651,7 @@ export async function createScheduleFromTool(
     nextRunAt: row.nextRunAt?.toISOString() ?? null,
     oneShot: isOneShotRoutineCrons(row.crons),
     ...describeRoutineTiming(row),
+    ...describeRoutineEnd(row),
   };
 }
 
@@ -595,6 +662,7 @@ export function scheduleCreateFields(args: Record<string, unknown>) {
     prompt: String(args.prompt ?? ""),
     timezone: args.timezone ? String(args.timezone) : undefined,
     schedule: compactScheduleInput({ ...scheduleTimingArgs(args), watch: args.watch }),
+    end: { until: args.until, endsAt: args.endsAt },
   };
 }
 
@@ -620,15 +688,16 @@ export async function scheduleCreateError(
       return parsedTimezone.error.issues.map((issue) => issue.message).join("; ");
     }
   }
+  const timezone = input.timezone ?? (await userTimeZone(prisma, input.userId));
+  const end = resolveRoutineEnd(input.end, timezone);
+  if (!end.ok) return end.error;
   if (input.schedule.watch !== undefined) {
     const parsed = scheduleWatch(input.schedule);
     return parsed.success ? undefined : parsed.error;
   }
-  const resolved = resolveScheduleTiming(
-    input.schedule,
-    input.timezone ?? (await userTimeZone(prisma, input.userId)),
-  );
-  return resolved.ok ? undefined : resolved.error;
+  const resolved = resolveScheduleTiming(input.schedule, timezone);
+  if (!resolved.ok) return resolved.error;
+  return endsBeforeFirstRun(end.endsAt, resolved.nextRunAt, timezone);
 }
 
 /** The watch of a `schedule_create` call, which takes no other timing. */
@@ -675,6 +744,7 @@ async function createWatchFromTool(
     prompt: string;
     timezone?: string;
     schedule: Record<string, unknown>;
+    end?: RoutineEndArgs;
   },
 ) {
   const parsed = scheduleWatch(input.schedule);
@@ -693,8 +763,10 @@ async function createWatchFromTool(
   const nextRunAt = new Date(Date.now() + 2_000);
   // As with a timed routine, a defaulted zone is read under a share lock in the same
   // transaction as the insert, so a zone change cannot cross the creation.
-  const insertWatch = (client: Pick<Prisma.TransactionClient, "routine">, timezone: string) =>
-    client.routine.create({
+  const insertWatch = (client: Pick<Prisma.TransactionClient, "routine">, timezone: string) => {
+    const end = resolveRoutineEnd(input.end ?? {}, timezone);
+    if (!end.ok) return { error: end.error } as const;
+    return client.routine.create({
       data: {
         spaceId: input.spaceId,
         botId: input.botId,
@@ -708,8 +780,11 @@ async function createWatchFromTool(
         active: true,
         watch: parsed.data as Prisma.InputJsonValue,
         nextRunAt,
+        until: end.until,
+        endsAt: end.endsAt,
       },
     });
+  };
   const row =
     input.timezone !== undefined
       ? await insertWatch(deps.prisma, input.timezone)
@@ -717,6 +792,7 @@ async function createWatchFromTool(
           const timezone = await sharedAccountZone(tx, input.userId);
           return insertWatch(tx, timezone);
         });
+  if ("error" in row) return { error: row.error };
   try {
     await deps.jobs.enqueue(routineWakeupJob(row.id, nextRunAt));
   } catch {
@@ -741,6 +817,7 @@ async function createWatchFromTool(
     routineId: row.id,
     name: row.name,
     watch: parsed.data,
+    ...describeRoutineEnd(row),
     note: `Takes a first reading now, then checks every ${parsed.data.everyMinutes} minutes and runs only when it changes.`,
   };
 }
@@ -768,6 +845,7 @@ export async function listSchedulesFromTool(
       nextRunAt: row.nextRunAt?.toISOString() ?? null,
       oneShot: isOneShotRoutineCrons(row.crons),
       ...describeRoutineTiming(row),
+      ...describeRoutineEnd(row),
       ...(row.watch ? { watch: row.watch, lastCheck: row.watchState ?? null } : {}),
       ...(input.groupThreadId ? { inThisChat: row.threadId === input.groupThreadId } : {}),
     })),
@@ -839,6 +917,7 @@ export async function updateScheduleFromTool(
     active?: boolean;
     timezone?: string;
     schedule: Record<string, unknown>;
+    end?: RoutineEndArgs;
   },
 ) {
   const routineId = input.routineId.trim();
@@ -875,12 +954,21 @@ export async function updateScheduleFromTool(
     }
     timezone = parsed.data;
   }
+  const end = resolveRoutineEnd(input.end ?? {}, timezone);
+  if (!end.ok) return { error: end.error };
   const hasTiming = SCHEDULE_TIMING_FIELDS.some((field) =>
     isScheduleValueProvided(input.schedule[field]),
   );
   const retime =
     hasTiming || isScheduleValueProvided(input.schedule.startAt) || timezone !== existing.timezone;
-  if (!retime && name === undefined && prompt === undefined && input.active === undefined) {
+  if (
+    !retime &&
+    name === undefined &&
+    prompt === undefined &&
+    input.active === undefined &&
+    end.until === undefined &&
+    end.endsAt === undefined
+  ) {
     return { error: "Nothing to update." };
   }
   if (retime && existing.watch != null) {
@@ -925,9 +1013,33 @@ export async function updateScheduleFromTool(
       }
     } else nextRunAt = nextCronDateAcross(crons, new Date(), timezone);
   }
+  // Turning an ended routine back on drops the end time it already passed.
+  const endsAt =
+    end.endsAt ??
+    (active && !existing.active && existing.endsAt && existing.endsAt.getTime() <= Date.now()
+      ? null
+      : existing.endsAt);
+  if (
+    end.endsAt &&
+    nextRunAt &&
+    !retime &&
+    !oneShot &&
+    existing.endsAt &&
+    existing.nextRunAt?.getTime() === existing.endsAt.getTime()
+  ) {
+    // The next run was only held at the old end time; take the real one.
+    nextRunAt =
+      existing.watch != null
+        ? new Date(Date.now() + 2_000)
+        : nextCronDateAcross(crons, new Date(), timezone);
+  }
+  nextRunAt = routineNextRunBeforeEnd(nextRunAt, endsAt);
   if (!active) nextRunAt = null;
   const timingChanged =
-    retime || active !== existing.active || nextRunAt?.getTime() !== existing.nextRunAt?.getTime();
+    retime ||
+    active !== existing.active ||
+    nextRunAt?.getTime() !== existing.nextRunAt?.getTime() ||
+    endsAt?.getTime() !== existing.endsAt?.getTime();
 
   // The scope is part of the write, so the routine cannot change hands between the read and it.
   // A name or prompt edit writes only those fields, so a run claimed meanwhile keeps its advance;
@@ -948,7 +1060,8 @@ export async function updateScheduleFromTool(
         : { userId: input.userId, watchState: Prisma.DbNull }),
       ...(name === undefined ? {} : { name }),
       ...(prompt === undefined ? {} : { prompt }),
-      ...(timingChanged ? { crons, timezone, active, nextRunAt } : {}),
+      ...(end.until === undefined ? {} : { until: end.until }),
+      ...(timingChanged ? { crons, timezone, active, nextRunAt, endsAt } : {}),
     },
   });
   if (count === 0) {
@@ -993,6 +1106,7 @@ export async function updateScheduleFromTool(
     nextRunAt: nextRunAt?.toISOString() ?? null,
     oneShot: isOneShotRoutineCrons(crons),
     ...describeRoutineTiming({ crons, timezone, nextRunAt }),
+    ...describeRoutineEnd({ timezone, endsAt, until: end.until ?? existing.until }),
   };
 }
 

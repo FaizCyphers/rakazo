@@ -61,7 +61,7 @@ export function RoutineEditor({
   onRevealWebhook: () => Promise<void>;
   onHideWebhook: () => void;
 }) {
-  const { t } = useLingui();
+  const { i18n, t } = useLingui();
   const fieldId = useId();
   const { withIdentityConfirmation, identityDialog } = useIdentityConfirmation();
   // Closing the confirmation is a choice, and other failures show as the editor's error.
@@ -90,6 +90,13 @@ export function RoutineEditor({
   const canTest = Boolean(editing) && !saving && !running;
   const needsOneShotArm =
     editing != null && routineNeedsOneShotArm(editing, draft.schedules.map(cronFromPreset));
+  const endsAt = editing?.endsAt
+    ? new Date(editing.endsAt).toLocaleString(i18n.locale || "en", {
+        dateStyle: "medium",
+        timeStyle: "short",
+      })
+    : null;
+  const until = editing?.until ?? null;
 
   return (
     <div>
@@ -250,6 +257,17 @@ export function RoutineEditor({
               onChange={(emailSenders) => onChange({ ...draft, emailSenders })}
               onRemove={() => onChange({ ...draft, emailSenders: null })}
             />
+          ) : null}
+
+          {endsAt ? (
+            <p className="text-body text-foreground/75">
+              <Trans>Ends {endsAt}</Trans>
+            </p>
+          ) : null}
+          {until ? (
+            <p className="text-body text-foreground/75">
+              <Trans>Until {until}</Trans>
+            </p>
           ) : null}
 
           {needsOneShotArm ? (

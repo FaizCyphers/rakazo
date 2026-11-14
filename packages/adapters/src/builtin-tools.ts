@@ -15,6 +15,7 @@ import {
   LOGIN_FIELD_LIMIT,
   PAID_REQUEST_METHODS,
   PURCHASE_CARD_FIELDS,
+  ROUTINE_UNTIL_MAX_LENGTH,
   SecretAskPurpose,
   SecretHttpRequest,
   ThinkingLevelSchema,
@@ -127,6 +128,19 @@ const scheduleCreateProperties = {
   timezone: { type: "string", description: "IANA timezone (default: the user's timezone)." },
 };
 
+/** When a routine stops on its own; only schedule_create and schedule_update take these. */
+const scheduleEndProperties = {
+  until: {
+    type: "string",
+    maxLength: ROUTINE_UNTIL_MAX_LENGTH,
+    description: "Condition each run checks; once true, the run calls schedule_finish.",
+  },
+  endsAt: {
+    type: "string",
+    description: "ISO datetime it stops by (max 1 year); without an offset, read in timezone.",
+  },
+};
+
 const scheduleTimingNames = [...SCHEDULE_TIMING_FIELDS, "watch"] as const;
 
 /**
@@ -212,12 +226,12 @@ function scheduleCreateBranch(
 /** Exactly one timing method. Null or blank leftovers stay valid so callers can ignore them. */
 const scheduleCreateInputSchema = {
   oneOf: [
-    scheduleCreateBranch(["cron"]),
-    scheduleCreateBranch(["every", "unit"]),
-    scheduleCreateBranch(["runAt"]),
-    scheduleCreateBranch(["delayMinutes"]),
-    scheduleCreateBranch(["delaySeconds"]),
-    scheduleCreateBranch(["watch"]),
+    scheduleCreateBranch(["cron"], scheduleEndProperties),
+    scheduleCreateBranch(["every", "unit"], scheduleEndProperties),
+    scheduleCreateBranch(["runAt"], scheduleEndProperties),
+    scheduleCreateBranch(["delayMinutes"], scheduleEndProperties),
+    scheduleCreateBranch(["delaySeconds"], scheduleEndProperties),
+    scheduleCreateBranch(["watch"], scheduleEndProperties),
   ],
 };
 
@@ -1443,6 +1457,7 @@ export const builtinAgentTools: ConnectorTool[] = [
         runAt: scheduleTimingSpecs.runAt,
         delayMinutes: scheduleTimingSpecs.delayMinutes,
         delaySeconds: scheduleTimingSpecs.delaySeconds,
+        ...scheduleEndProperties,
       },
       required: ["routineId"],
     },
@@ -1457,6 +1472,12 @@ export const builtinAgentTools: ConnectorTool[] = [
         name: { type: "string" },
       },
     },
+  },
+  {
+    name: "schedule_finish",
+    description:
+      "Turn off the routine this run belongs to because its until condition is now true. Report what you found first.",
+    inputSchema: { type: "object", properties: {} },
   },
   {
     name: "end_call",
