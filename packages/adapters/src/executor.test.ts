@@ -4615,6 +4615,7 @@ describe("ticket board tool capability", () => {
     "board_tickets",
     "ticket_get",
     "ticket_create",
+    "ticket_plan",
     "ticket_update",
     "ticket_comment",
   ];

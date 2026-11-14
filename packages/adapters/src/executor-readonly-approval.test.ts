@@ -6,7 +6,7 @@ import type {
   ConnectorTool,
 } from "@rakazo/adapter-kit";
 import { MEMORY_REVISION_CONFLICT_ERROR } from "@rakazo/adapter-kit";
-import type { ModelRoleSettings, SpendingLimit } from "@rakazo/contracts";
+import type { LabFeature, ModelRoleSettings, SpendingLimit } from "@rakazo/contracts";
 import type { ActionApprovalRule } from "@rakazo/core";
 import { inboundRoutineBlock } from "@rakazo/core";
 import { approvalEffectKey, toolEffectIdempotencyKey } from "@rakazo/core/node/approval-effect-key";
@@ -111,7 +111,10 @@ function fixture({
   browser,
   spendingLimit = null,
   memoryProvider,
+  deploymentLabs,
 }: {
+  /** Labs on for every account, as a self-hosted server's settings turn them on. */
+  deploymentLabs?: LabFeature[];
   /** The Space's semantic memory provider; none by default. */
   memoryProvider?: Record<string, unknown>;
   /** A page browser on a graphical computer, so browser_act and computer_act are offered. */
@@ -329,6 +332,10 @@ function fixture({
     $executeRaw: vi.fn(async () => 0),
     $queryRaw: vi.fn(async () => []),
     space: { findUnique: vi.fn(async () => null) },
+    board: {
+      findUnique: vi.fn(async () => ({ id: "board-1", spaceId: "ws", ticketPrefix: "RAK" })),
+    },
+    ticket: { findMany: vi.fn(async () => []) },
     spaceMember: { findUnique: vi.fn(async () => ({ id: "member-1" })) },
     spendingLimit: spending.client.spendingLimit,
     payment: spending.client.payment,
@@ -560,6 +567,7 @@ function fixture({
   const enqueue = vi.fn(async (_job: unknown) => undefined);
   const executor = createRunExecutor({
     deploymentModelKey: "fixture-model-key",
+    deploymentLabs,
     prisma: transactionalPrisma,
     runtime: { describe: () => ({ capabilities: { scripted: false } }), run: runtimeRun },
     connector: {
@@ -2583,6 +2591,76 @@ describe("bot management tool gating", () => {
     await untrusted.run();
     expect(untrusted.results).toEqual([trustRejection]);
     expect(untrusted.offeredTools()).toContain("update_bot");
+  });
+});
+
+describe("ticket plan approvals", () => {
+  it("asks once with every resolved ticket, owner and prerequisite", async () => {
+    const f = fixture({
+      name: "ticket_plan",
+      builtin: true,
+      deploymentLabs: ["board"],
+      fleetBots: [{ id: "bot-a", name: "Alpha" }],
+    });
+    f.setCalls([
+      {
+        args: {
+          tickets: [
+            { key: "api", title: "Build the API", ownerBotId: "bot-a" },
+            { key: "docs", title: "Write the docs", ownerBotId: "bot-a", waitsOn: ["api"] },
+          ],
+        },
+        executionId: "call-1",
+      },
+    ]);
+    await f.run();
+    expect(f.offeredTools()).toContain("ticket_plan");
+    expect(f.effects).toEqual([
+      expect.objectContaining({
+        kind: "ticket_plan",
+        status: "intended",
+        request: {
+          tickets: [
+            expect.objectContaining({ key: "api", ownerBotId: "bot-a", waitsOn: [] }),
+            expect.objectContaining({ key: "docs", ownerBotId: "bot-a", waitsOn: ["api"] }),
+          ],
+        },
+      }),
+    ]);
+    expect(f.pauseRunForInput).toHaveBeenCalledWith(
+      expect.objectContaining({
+        blocks: [
+          expect.objectContaining({
+            text: "Create 2 tickets?",
+            detail: "1. Build the API — Alpha\n2. Write the docs — Alpha · waits on #1",
+          }),
+        ],
+      }),
+    );
+  });
+
+  it("refuses a plan with a loop before showing a card", async () => {
+    const f = fixture({
+      name: "ticket_plan",
+      builtin: true,
+      deploymentLabs: ["board"],
+      fleetBots: [{ id: "bot-a", name: "Alpha" }],
+    });
+    f.setCalls([
+      {
+        args: {
+          tickets: [
+            { key: "a", title: "A", ownerBotId: "bot-a", waitsOn: ["b"] },
+            { key: "b", title: "B", ownerBotId: "bot-a", waitsOn: ["a"] },
+          ],
+        },
+        executionId: "call-1",
+      },
+    ]);
+    await f.run();
+    expect(f.results.at(-1)).toEqual({ error: "These tickets wait on each other: a -> b -> a." });
+    expect(f.effects).toEqual([]);
+    expect(f.pauseRunForInput).not.toHaveBeenCalled();
   });
 });
 

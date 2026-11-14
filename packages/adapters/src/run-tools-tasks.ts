@@ -34,6 +34,7 @@ import { taskCatalogFromTool } from "./task-catalog.js";
 import {
   commentTicket,
   createTicket,
+  createTicketPlan,
   getTicket,
   listBoardTickets,
   updateTicket,
@@ -67,6 +68,15 @@ export async function scheduleCreateRefusal(
       ...scheduleCreateFields(args),
     }));
   return error ? { error } : undefined;
+}
+
+/** Ticket fields the create and update tools share; the contracts validate them. */
+function ticketPlanningArgs(args: Record<string, unknown>) {
+  return {
+    doneWhen: args.doneWhen !== undefined ? (args.doneWhen as string) : undefined,
+    acceptance: args.acceptance !== undefined ? (args.acceptance as never) : undefined,
+    waitsOn: args.waitsOn !== undefined ? (args.waitsOn as string[]) : undefined,
+  };
 }
 
 /** The task catalog, scratchpad, ticket board, schedules and skills. */
@@ -173,7 +183,19 @@ export const taskTools: ToolHandlers = {
         description: args.description !== undefined ? String(args.description) : undefined,
         priority: args.priority !== undefined ? String(args.priority) : undefined,
         ownerBotId: args.ownerBotId !== undefined ? String(args.ownerBotId) : undefined,
+        ...ticketPlanningArgs(args),
       }),
+    );
+  },
+  async ticket_plan(ctx, call) {
+    const { deps, run, bot } = ctx;
+    // The arguments were resolved before the approval card (see prepareToolRequest).
+    return call.finish(
+      await createTicketPlan(
+        deps,
+        { spaceId: run.spaceId, userId: run.userId, botId: bot.id },
+        call.args,
+      ),
     );
   },
   async ticket_update(ctx, call) {
@@ -190,6 +212,7 @@ export const taskTools: ToolHandlers = {
         priority: args.priority !== undefined ? String(args.priority) : undefined,
         status: args.status !== undefined ? String(args.status) : undefined,
         ownerBotId: args.ownerBotId !== undefined ? String(args.ownerBotId) : undefined,
+        ...ticketPlanningArgs(args),
       }),
     );
   },

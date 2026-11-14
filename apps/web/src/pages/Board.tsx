@@ -13,6 +13,7 @@ import { fetchFresh, writeSaved } from "@rakazo/core/query";
 import {
   Button,
   buttonVariants,
+  Checkbox,
   Dialog,
   DialogContent,
   DialogHeader,
@@ -177,6 +178,42 @@ export function BoardPage() {
   );
 }
 
+/** What a bot planned for the ticket: shown only when it set any of it. */
+function TicketPlanDetails({ ticket }: { ticket: Ticket }) {
+  if (!ticket.doneWhen && !ticket.waitsOn.length && !ticket.acceptance.length) return null;
+  return (
+    <div data-testid="ticket-plan" className="space-y-2 text-body">
+      {ticket.doneWhen ? (
+        <p dir="auto">
+          <span className="text-muted-foreground">
+            <Trans>Done when</Trans>
+          </span>{" "}
+          {ticket.doneWhen}
+        </p>
+      ) : null}
+      {ticket.waitsOn.length ? (
+        <p>
+          <span className="text-muted-foreground">
+            <Trans>Waits on</Trans>
+          </span>{" "}
+          {ticket.waitsOn.join(", ")}
+        </p>
+      ) : null}
+      {ticket.acceptance.length ? (
+        <ul className="space-y-1">
+          {ticket.acceptance.map((step, index) => (
+            // Steps have no id; the list is read-only, so its order is stable.
+            <li key={index} className="flex items-start gap-2">
+              <Checkbox checked={step.checked} disabled aria-label={step.text} className="mt-1" />
+              <span dir="auto">{step.text}</span>
+            </li>
+          ))}
+        </ul>
+      ) : null}
+    </div>
+  );
+}
+
 function TicketDialog({
   ticket,
   bots,
@@ -304,6 +341,7 @@ function TicketDialog({
               maxLength={TICKET_DESCRIPTION_MAX_LENGTH}
             />
           </label>
+          {ticket ? <TicketPlanDetails ticket={ticket} /> : null}
           <label htmlFor={`${formId}-owner`} className="block space-y-1 text-body">
             <span>
               <Trans>Owner</Trans>

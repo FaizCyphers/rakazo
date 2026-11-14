@@ -102,8 +102,8 @@ describe("toolRequiresApproval", () => {
     }
   });
 
-  it("treats grouping and scheduling other bots as ordinary approvals that Never ask skips", () => {
-    for (const name of ["create_group", "update_group", "create_child_routine"]) {
+  it("treats grouping, scheduling other bots and ticket plans as ordinary approvals that Never ask skips", () => {
+    for (const name of ["create_group", "update_group", "create_child_routine", "ticket_plan"]) {
       expect(toolRequiresApproval(name, false)).toBe(true);
       expect(toolRequiresExplicitApproval(name)).toBe(false);
     }

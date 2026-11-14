@@ -4,8 +4,10 @@ import {
   GetTicketInput,
   isTicketCompletedStatus,
   parseTicketRef,
+  TICKET_PLAN_MAX_TICKETS,
   TICKET_PRIORITIES,
   TICKET_STATUSES,
+  TicketPlanInput,
   TicketSchema,
   UpdateTicketInput,
 } from "./board.js";
@@ -59,6 +61,9 @@ describe("ticket contracts", () => {
     createdAt: "2026-01-01T00:00:00.000Z",
     updatedAt: "2026-01-01T00:00:00.000Z",
     completedAt: null,
+    doneWhen: null,
+    acceptance: [],
+    waitsOn: [],
   };
 
   it("accepts a ticket document and rejects unknown statuses", () => {
@@ -94,6 +99,30 @@ describe("ticket contracts", () => {
       CreateTicketInput.parse({ title: "Ship", assigneeBotId: "bot-1", priority: "whenever" }),
     ).toThrow();
     expect(TICKET_PRIORITIES).toEqual(["low", "normal", "high", "urgent"]);
+  });
+
+  it("accepts a plan of 1 to 20 tickets with unique, plain keys", () => {
+    const item = { key: "api", title: "API", assigneeBotId: "bot-1" };
+    expect(TicketPlanInput.parse({ tickets: [item] }).tickets[0]).toEqual({
+      ...item,
+      priority: "normal",
+      waitsOn: [],
+    });
+    expect(TicketPlanInput.safeParse({ tickets: [] }).success).toBe(false);
+    const many = Array.from({ length: TICKET_PLAN_MAX_TICKETS + 1 }, (_, index) => ({
+      ...item,
+      key: `k${index}`,
+    }));
+    expect(TicketPlanInput.safeParse({ tickets: many }).success).toBe(false);
+    expect(TicketPlanInput.safeParse({ tickets: [item, { ...item, key: "API" }] }).success).toBe(
+      false,
+    );
+    expect(TicketPlanInput.safeParse({ tickets: [{ ...item, key: "RAK-1" }] }).success).toBe(false);
+    expect(
+      TicketPlanInput.safeParse({
+        tickets: [{ ...item, acceptance: [{ text: "x".repeat(501) }] }],
+      }).success,
+    ).toBe(false);
   });
 
   it("requires exactly one of id or ref when fetching", () => {

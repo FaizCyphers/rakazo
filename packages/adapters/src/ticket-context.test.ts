@@ -50,6 +50,27 @@ describe("renderTicketContext", () => {
     expect(block?.endsWith("</tickets_referenced>")).toBe(true);
   });
 
+  it("shows what done means, what the ticket waits on and its acceptance steps", () => {
+    const block = renderTicketContext([
+      {
+        ref: "RAK-5",
+        title: "Ship",
+        status: "todo",
+        assignee: null,
+        lastComment: null,
+        doneWhen: "Live in production",
+        waitsOn: [{ ref: "RAK-3", status: "done" }],
+        acceptance: [
+          { text: "Tests pass", checked: true },
+          { text: "Docs updated", checked: false },
+        ],
+      },
+    ]);
+    expect(block).toContain(
+      "- RAK-5 [todo] Ship — done when: Live in production — waits on: RAK-3 [done] — acceptance: [x] Tests pass; [ ] Docs updated",
+    );
+  });
+
   it("escapes delimiter-breaking content and keeps the closing tag under the byte cap", () => {
     const block = renderTicketContext(
       [

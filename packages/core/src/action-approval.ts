@@ -86,6 +86,8 @@ const APPROVAL_REQUIRED_BUILTIN_TOOLS = new Set([
   "create_group",
   "update_group",
   "create_child_routine",
+  // A plan writes many tickets that later start on their own; its card lists them all.
+  "ticket_plan",
   "feedback",
   "send_email",
 ]);

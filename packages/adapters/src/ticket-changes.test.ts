@@ -10,7 +10,7 @@ const change: TicketChange = {
   assigneeBotId: "bot-1",
   wakeAssignee: true,
 };
-function setup(ownerLabs: string[], status = "todo") {
+function setup(ownerLabs: string[], status = "todo", openPrerequisites = 0) {
   const notify = vi.fn(async () => {});
   const enqueue = vi.fn(async () => {});
   const createRun = vi.fn(async () => ({ id: "run-1" }));
@@ -27,6 +27,7 @@ function setup(ownerLabs: string[], status = "todo") {
     bot: {
       findFirst: vi.fn(async () => ({ id: "bot-1", userId: "user-1", thread: { id: "thread-1" } })),
     },
+    ticketDependency: { count: vi.fn(async () => openPrerequisites) },
     user: { findUnique: vi.fn(async () => ({ labs: ownerLabs })) },
     task: { create: createTask },
     run: { create: createRun },
@@ -79,6 +80,13 @@ describe("ticket changes", () => {
       expect(s.enqueue).not.toHaveBeenCalled();
     },
   );
+  it("does not wake a ticket still waiting on unfinished tickets", async () => {
+    const s = setup(["board"], "todo", 1);
+    await s.changes(change);
+    expect(s.notify).toHaveBeenCalledTimes(1);
+    expect(s.createRun).not.toHaveBeenCalled();
+    expect(s.enqueue).not.toHaveBeenCalled();
+  });
   it("only publishes changes for comments or status edits", async () => {
     const s = setup(["board"]);
     await s.changes({ ...change, wakeAssignee: false });

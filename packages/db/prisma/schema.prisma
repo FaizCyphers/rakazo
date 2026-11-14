@@ -694,7 +694,8 @@ model Space {
   board                       Board?
   tickets                     Ticket[]
   ticketComments              TicketComment[]
-  agentSkillSpaces            AgentSkillSpace[]
+  ticketDependencies          TicketDependency[]
+  agentSkillSpaces           AgentSkillSpace[]
   mcpServerSpaces             McpServerSpace[]
   capabilityInstallSpaces     CapabilityInstallSpace[]
 
@@ -2543,12 +2544,33 @@ model Ticket {
   createdAt       DateTime  @default(now())
   updatedAt       DateTime  @updatedAt
   completedAt       DateTime?
+  /// What finished means, in a sentence.
+  doneWhen        String?
+  /// Acceptance steps as [{ text, checked }].
+  acceptance      Json?
   comments        TicketComment[]
+  waitsOn         TicketDependency[] @relation("TicketWaitsOn")
+  neededBy        TicketDependency[] @relation("TicketNeededBy")
 
   @@unique([boardId, number])
   @@index([spaceId, status])
   @@index([boardId, status])
   @@map("tickets")
+}
+
+/// `ticketId` starts only once `dependsOnTicketId` is complete. Both are on the same board.
+model TicketDependency {
+  ticketId          String
+  ticket            Ticket   @relation("TicketWaitsOn", fields: [ticketId], references: [id], onDelete: Cascade)
+  dependsOnTicketId String
+  dependsOnTicket   Ticket   @relation("TicketNeededBy", fields: [dependsOnTicketId], references: [id], onDelete: Cascade)
+  spaceId           String
+  space             Space    @relation(fields: [spaceId], references: [id], onDelete: Cascade)
+  createdAt         DateTime @default(now())
+
+  @@id([ticketId, dependsOnTicketId])
+  @@index([dependsOnTicketId])
+  @@map("ticket_dependencies")
 }
 
 model TicketComment {

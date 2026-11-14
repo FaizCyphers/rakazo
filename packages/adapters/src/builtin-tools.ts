@@ -18,11 +18,16 @@ import {
   SecretAskPurpose,
   SecretHttpRequest,
   ThinkingLevelSchema,
+  TICKET_ACCEPTANCE_MAX_STEPS,
+  TICKET_ACCEPTANCE_STEP_MAX_LENGTH,
   TICKET_COMMENT_MAX_LENGTH,
   TICKET_DESCRIPTION_MAX_LENGTH,
+  TICKET_DONE_WHEN_MAX_LENGTH,
+  TICKET_PLAN_MAX_TICKETS,
   TICKET_PRIORITIES,
   TICKET_STATUSES,
   TICKET_TITLE_MAX_LENGTH,
+  TICKET_WAITS_ON_MAX,
 } from "@rakazo/contracts";
 import { z } from "zod";
 import { allowPrivateHttpSecretOrigins } from "./bot-secrets.js";
@@ -245,6 +250,32 @@ const fleetBotTargetProperties = {
 const fleetGroupTargetProperties = {
   group_id: { type: "string", description: "Id of the group." },
   group_name: { type: "string", description: "Exact name of the group." },
+};
+
+const ticketDoneWhenSchema = {
+  type: "string",
+  maxLength: TICKET_DONE_WHEN_MAX_LENGTH,
+  description: "What finished means, in a sentence.",
+};
+const ticketAcceptanceSchema = {
+  type: "array",
+  maxItems: TICKET_ACCEPTANCE_MAX_STEPS,
+  description: "Steps that check the work. Replaces the whole list.",
+  items: {
+    type: "object",
+    properties: {
+      text: { type: "string", maxLength: TICKET_ACCEPTANCE_STEP_MAX_LENGTH },
+      checked: { type: "boolean" },
+    },
+    required: ["text"],
+  },
+};
+const ticketWaitsOnSchema = {
+  type: "array",
+  maxItems: TICKET_WAITS_ON_MAX,
+  items: { type: "string" },
+  description:
+    "Tickets that must be done first, by reference such as RAK-3. It starts once they are.",
 };
 
 export const builtinAgentTools: ConnectorTool[] = [
@@ -1379,8 +1410,48 @@ export const builtinAgentTools: ConnectorTool[] = [
           type: "string",
           description: "Bot in this space to own it. Defaults to you.",
         },
+        doneWhen: ticketDoneWhenSchema,
+        acceptance: ticketAcceptanceSchema,
+        waitsOn: ticketWaitsOnSchema,
       },
       required: ["title"],
+    },
+  },
+  {
+    name: "ticket_plan",
+    description:
+      "Create several tickets at once, with what each waits on. The user approves the whole plan; each ticket starts when the ones it waits on are done.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        tickets: {
+          type: "array",
+          minItems: 1,
+          maxItems: TICKET_PLAN_MAX_TICKETS,
+          items: {
+            type: "object",
+            properties: {
+              key: {
+                type: "string",
+                description: "Short name for this ticket within the plan, such as api or docs.",
+              },
+              title: { type: "string", maxLength: TICKET_TITLE_MAX_LENGTH },
+              description: { type: "string", maxLength: TICKET_DESCRIPTION_MAX_LENGTH },
+              priority: { type: "string", enum: TICKET_PRIORITIES },
+              ownerBotId: { type: "string", description: "Defaults to you." },
+              doneWhen: ticketDoneWhenSchema,
+              acceptance: ticketAcceptanceSchema,
+              waitsOn: {
+                ...ticketWaitsOnSchema,
+                description:
+                  "Keys of other tickets in this plan, or references of existing tickets.",
+              },
+            },
+            required: ["key", "title"],
+          },
+        },
+      },
+      required: ["tickets"],
     },
   },
   {
@@ -1395,6 +1466,9 @@ export const builtinAgentTools: ConnectorTool[] = [
         priority: { type: "string", enum: TICKET_PRIORITIES },
         status: { type: "string", enum: TICKET_STATUSES },
         ownerBotId: { type: "string" },
+        doneWhen: ticketDoneWhenSchema,
+        acceptance: ticketAcceptanceSchema,
+        waitsOn: ticketWaitsOnSchema,
       },
       required: ["id"],
     },

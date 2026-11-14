@@ -3,12 +3,15 @@ import {
   TICKET_DESCRIPTION_MAX_LENGTH,
   TICKET_TITLE_MAX_LENGTH,
 } from "@rakazo/contracts";
+import { TICKET_WAITS_ON_INCLUDE } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import {
   commentTicket,
   createTicket,
+  createTicketPlan,
   getTicket,
   listBoardTickets,
+  prepareTicketPlan,
   updateTicket,
 } from "./ticket-tools.js";
 
@@ -169,7 +172,9 @@ function mutationDeps() {
     ticket: {
       findFirst: vi.fn(async () => current),
       create: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
-        current = ticket(data);
+        // The row comes back with its links as numbers, not the nested create.
+        const { waitsOn: _waitsOn, ...fields } = data;
+        current = ticket(fields);
         return current;
       }),
       update: vi.fn(async ({ data }: { data: Record<string, unknown> }) => {
@@ -376,6 +381,7 @@ describe("ticket mutations", () => {
     });
     expect(s.prisma.ticket.findFirst).toHaveBeenCalledWith({
       where: { number: 1, spaceId: "ws", boardId: "board-1" },
+      include: TICKET_WAITS_ON_INCLUDE,
     });
   });
   it("only assigns the acting user's own bots", async () => {
@@ -418,5 +424,296 @@ describe("ticket mutations", () => {
       updateTicket(s.deps, { spaceId: "ws", userId: "user-1", id: "t1", ownerBotId: "foreign" }),
     ).resolves.toHaveProperty("error");
     expect(s.prisma.$transaction).not.toHaveBeenCalled();
+  });
+});
+
+/** Answers each raw query by what it reads, so a test only names what matters to it. */
+function rawQueries(answers: {
+  prerequisites?: unknown[];
+  dependents?: unknown[];
+  cycle?: unknown[];
+}) {
+  return vi.fn(async (strings: TemplateStringsArray) => {
+    const sql = strings.join("?");
+    if (sql.includes("WITH RECURSIVE")) return answers.cycle ?? [];
+    if (sql.includes("JOIN ticket_dependencies")) return answers.dependents ?? [];
+    if (sql.includes("FOR SHARE")) return answers.prerequisites ?? [];
+    return [];
+  });
+}
+
+describe("ticket dependencies", () => {
+  it("creates a ticket that waits on an unfinished one without waking its owner", async () => {
+    const s = mutationDeps();
+    Object.assign(s.tx, {
+      $queryRaw: rawQueries({ prerequisites: [{ id: "t4", number: 4, status: "doing" }] }),
+    });
+    const result = await createTicket(s.deps, {
+      spaceId: "ws",
+      botId: "bot-1",
+      userId: "user-1",
+      title: "Ship",
+      ownerBotId: "bot-2",
+      doneWhen: "Deployed",
+      acceptance: [{ text: "Smoke test passes" }],
+      waitsOn: ["RAK-4"],
+    });
+    expect(result).toHaveProperty("ticket.title", "Ship");
+    expect(s.tx.ticket.create).toHaveBeenCalledWith(
+      expect.objectContaining({
+        data: expect.objectContaining({
+          doneWhen: "Deployed",
+          acceptance: [{ text: "Smoke test passes", checked: false }],
+          waitsOn: { create: [{ dependsOnTicketId: "t4", spaceId: "ws" }] },
+        }),
+      }),
+    );
+    expect(s.changes).toHaveBeenCalledWith(expect.objectContaining({ wakeAssignee: false }));
+  });
+
+  it("refuses an unknown prerequisite and writes nothing", async () => {
+    const s = mutationDeps();
+    Object.assign(s.tx, { $queryRaw: rawQueries({ prerequisites: [] }) });
+    await expect(
+      createTicket(s.deps, {
+        spaceId: "ws",
+        userId: "user-1",
+        botId: "bot-1",
+        title: "Ship",
+        waitsOn: ["RAK-9"],
+      }),
+    ).resolves.toEqual({ error: "Unknown ticket RAK-9 in waitsOn." });
+    expect(s.tx.ticket.create).not.toHaveBeenCalled();
+    expect(s.changes).not.toHaveBeenCalled();
+  });
+
+  it("refuses waitsOn that would close a cycle", async () => {
+    const s = mutationDeps();
+    Object.assign(s.tx, {
+      $queryRaw: rawQueries({
+        prerequisites: [{ id: "t2", number: 2, status: "todo" }],
+        cycle: [{ id: "t1" }],
+      }),
+      ticketDependency: { count: vi.fn(), deleteMany: vi.fn(), createMany: vi.fn() },
+    });
+    await expect(
+      updateTicket(s.deps, { spaceId: "ws", userId: "user-1", id: "t1", waitsOn: ["RAK-2"] }),
+    ).resolves.toEqual({ error: "waitsOn would make tickets wait on each other." });
+    expect(s.tx.ticket.update).not.toHaveBeenCalled();
+    expect(s.changes).not.toHaveBeenCalled();
+  });
+
+  it("wakes the owners of dependents whose prerequisites are now all complete", async () => {
+    const s = mutationDeps();
+    const count = vi.fn(async ({ where }: { where: { ticketId: string } }) =>
+      where.ticketId === "t8" ? 1 : 0,
+    );
+    Object.assign(s.tx, {
+      $queryRaw: rawQueries({
+        dependents: [
+          { id: "t7", assigneeBotId: "bot-3" },
+          { id: "t8", assigneeBotId: "bot-4" },
+        ],
+      }),
+      ticketDependency: { count },
+    });
+    await updateTicket(s.deps, {
+      spaceId: "ws",
+      userId: "user-1",
+      botId: "bot-1",
+      id: "t1",
+      status: "done",
+    });
+    expect(s.changes.mock.calls.map(([value]) => value)).toEqual([
+      expect.objectContaining({ ticketId: "t1", wakeAssignee: false }),
+      expect.objectContaining({ ticketId: "t7", assigneeBotId: "bot-3", wakeAssignee: true }),
+    ]);
+
+    // Already complete: moving from done to closed starts nothing new.
+    s.changes.mockClear();
+    await updateTicket(s.deps, { spaceId: "ws", userId: "user-1", id: "t1", status: "closed" });
+    expect(s.changes).toHaveBeenCalledTimes(1);
+  });
+});
+
+function planDeps(existing: Array<{ id: string; number: number; status: string }> = []) {
+  const changes = vi.fn(async (_change: { ticketId: string; wakeAssignee: boolean }) => {});
+  let next = 10;
+  const tx = {
+    board: { update: vi.fn(async () => ({ nextNumber: ++next })) },
+    ticket: {
+      create: vi.fn(async ({ data }: { data: { number: number; assigneeBotId: string } }) => ({
+        id: `new-${data.number}`,
+        number: data.number,
+        assigneeBotId: data.assigneeBotId,
+      })),
+    },
+    ticketDependency: { createMany: vi.fn(async (_args: unknown) => ({ count: 0 })) },
+    $queryRaw: rawQueries({ prerequisites: existing }),
+  };
+  const prisma = {
+    ...boardSpace(),
+    bot: {
+      findMany: vi.fn(async ({ where }: { where: { id: { in: string[] } } }) =>
+        [
+          { id: "bot-1", name: "Planner" },
+          { id: "bot-2", name: "Builder" },
+        ].filter((bot) => where.id.in.includes(bot.id)),
+      ),
+    },
+    ticket: {
+      findMany: vi.fn(async ({ where }: { where: { number: { in: number[] } } }) =>
+        existing.filter((row) => where.number.in.includes(row.number)),
+      ),
+    },
+    $transaction: vi.fn(async (fn: (client: typeof tx) => Promise<unknown>) => fn(tx)),
+  };
+  return { deps: { prisma, onTicketChange: changes } as never, prisma, tx, changes };
+}
+
+const scope = { spaceId: "ws", userId: "user-1", botId: "bot-1" };
+
+describe("ticket plans", () => {
+  it("shows every ticket, its owner and what it waits on before approval", async () => {
+    const s = planDeps([{ id: "t4", number: 4, status: "done" }]);
+    const prepared = await prepareTicketPlan(s.deps, scope, {
+      tickets: [
+        { key: "api", title: "Build the API", ownerBotId: "bot-2", waitsOn: ["rak-4"] },
+        { key: "docs", title: "Write   the docs", waitsOn: ["API"] },
+      ],
+    });
+    expect(prepared).toEqual({
+      summary: {
+        title: "Create 2 tickets?",
+        lines: [
+          "1. Build the API — Builder · waits on RAK-4",
+          "2. Write the docs — Planner · waits on #1",
+        ],
+      },
+      canonical: {
+        tickets: [
+          {
+            key: "api",
+            title: "Build the API",
+            priority: "normal",
+            ownerBotId: "bot-2",
+            waitsOn: ["RAK-4"],
+          },
+          {
+            key: "docs",
+            title: "Write   the docs",
+            priority: "normal",
+            ownerBotId: "bot-1",
+            waitsOn: ["api"],
+          },
+        ],
+      },
+    });
+    expect(s.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    [
+      "a cycle",
+      [
+        { key: "a", title: "A", waitsOn: ["b"] },
+        { key: "b", title: "B", waitsOn: ["c"] },
+        { key: "c", title: "C", waitsOn: ["a"] },
+      ],
+      "These tickets wait on each other: a -> b -> c -> a.",
+    ],
+    ["a self wait", [{ key: "a", title: "A", waitsOn: ["A"] }], "a cannot wait on itself."],
+    [
+      "an unknown key",
+      [{ key: "a", title: "A", waitsOn: ["nope"] }],
+      "Unknown key or ticket nope in waitsOn of a.",
+    ],
+    [
+      "an unknown board ticket",
+      [{ key: "a", title: "A", waitsOn: ["RAK-77"] }],
+      "Unknown ticket RAK-77 in waitsOn.",
+    ],
+    [
+      "a duplicate key",
+      [
+        { key: "a", title: "A" },
+        { key: "A", title: "B" },
+      ],
+      "tickets.1.key: Duplicate key A",
+    ],
+    [
+      "an unknown owner",
+      [{ key: "a", title: "A", ownerBotId: "other-members-bot" }],
+      "Unknown bot other-members-bot.",
+    ],
+  ])("refuses %s before the card and writes nothing", async (_name, tickets, error) => {
+    const s = planDeps();
+    await expect(prepareTicketPlan(s.deps, scope, { tickets })).resolves.toEqual({ error });
+    await expect(createTicketPlan(s.deps, scope, { tickets })).resolves.toEqual({ error });
+    expect(s.prisma.$transaction).not.toHaveBeenCalled();
+    expect(s.changes).not.toHaveBeenCalled();
+  });
+
+  it("refuses a plan too long to show whole on the card", async () => {
+    const s = planDeps();
+    const tickets = Array.from({ length: 20 }, (_, index) => ({
+      key: `k${index}`,
+      title: "x".repeat(TICKET_TITLE_MAX_LENGTH),
+    }));
+    await expect(prepareTicketPlan(s.deps, scope, { tickets })).resolves.toEqual({
+      error: "This plan is too long to show on the approval card. Split it up.",
+    });
+  });
+
+  it("writes every ticket and link in one transaction and wakes only the ready ones", async () => {
+    const s = planDeps([
+      { id: "t4", number: 4, status: "done" },
+      { id: "t5", number: 5, status: "doing" },
+    ]);
+    const result = await createTicketPlan(s.deps, scope, {
+      tickets: [
+        { key: "a", title: "A", ownerBotId: "bot-2" },
+        { key: "b", title: "B", ownerBotId: "bot-2", waitsOn: ["a"] },
+        { key: "c", title: "C", ownerBotId: "bot-2", waitsOn: ["RAK-4"] },
+        { key: "d", title: "D", ownerBotId: "bot-2", waitsOn: ["RAK-5"] },
+        { key: "e", title: "E" },
+      ],
+    });
+    expect(s.prisma.$transaction).toHaveBeenCalledOnce();
+    expect(s.tx.ticket.create).toHaveBeenCalledTimes(5);
+    expect(s.tx.ticketDependency.createMany).toHaveBeenCalledOnce();
+    expect(s.tx.ticketDependency.createMany).toHaveBeenCalledWith({
+      data: [
+        { ticketId: "new-11", dependsOnTicketId: "new-10", spaceId: "ws" },
+        { ticketId: "new-12", dependsOnTicketId: "t4", spaceId: "ws" },
+        { ticketId: "new-13", dependsOnTicketId: "t5", spaceId: "ws" },
+      ],
+    });
+    expect(s.changes.mock.calls.map(([value]) => [value.ticketId, value.wakeAssignee])).toEqual([
+      ["new-10", true],
+      ["new-11", false],
+      ["new-12", true],
+      ["new-13", false],
+      // The planner owns E and is already running.
+      ["new-14", false],
+    ]);
+    expect(result).toHaveProperty(
+      "tickets.1",
+      expect.objectContaining({ ref: "RAK-11", waitsOn: ["RAK-10"] }),
+    );
+  });
+
+  it("wakes nobody when the transaction fails", async () => {
+    const s = planDeps();
+    s.tx.ticketDependency.createMany.mockRejectedValueOnce(new Error("conflict"));
+    await expect(
+      createTicketPlan(s.deps, scope, {
+        tickets: [
+          { key: "a", title: "A" },
+          { key: "b", title: "B", waitsOn: ["a"] },
+        ],
+      }),
+    ).rejects.toThrow("conflict");
+    expect(s.changes).not.toHaveBeenCalled();
   });
 });

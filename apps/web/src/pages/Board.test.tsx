@@ -39,9 +39,11 @@ vi.mock("@rakazo/chat-ui/web", () => ({
 }));
 vi.mock("@rakazo/ui-web", async (importOriginal) => {
   const Container = ({ children }: { children?: ReactNode }) => <div>{children}</div>;
+  const original = await importOriginal<typeof UiWeb>();
   return {
     Button: (props: ComponentProps<"button">) => <button {...props} />,
-    buttonVariants: (await importOriginal<typeof UiWeb>()).buttonVariants,
+    buttonVariants: original.buttonVariants,
+    Checkbox: original.Checkbox,
     Dialog: Container,
     DialogContent: Container,
     DialogHeader: Container,
@@ -91,6 +93,9 @@ function ticket(
     createdAt: new Date().toISOString(),
     updatedAt: new Date().toISOString(),
     completedAt: null,
+    doneWhen: null as string | null,
+    acceptance: [] as Array<{ text: string; checked: boolean }>,
+    waitsOn: [] as string[],
   };
 }
 
@@ -182,6 +187,42 @@ it("renders status columns and opens a ticket with comments", async () => {
       "flex justify-end",
     ]);
     expect(api.tickets.comments).toHaveBeenCalledWith({ ticketId: "ticket-1" }, expect.anything());
+  } finally {
+    await page.cleanup();
+  }
+});
+
+it("shows what a ticket waits on and how it is checked, read-only", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  api.bots.list.mockResolvedValue([bot("bot-1", "Helper")]);
+  api.tickets.list.mockResolvedValue({
+    tickets: [
+      {
+        ...ticket("Docs", "ticket-3", "todo", "RAK-3", "bot-1"),
+        doneWhen: "Linked from the README",
+        waitsOn: ["RAK-1", "RAK-2"],
+        acceptance: [
+          { text: "Examples run", checked: true },
+          { text: "Reviewed", checked: false },
+        ],
+      },
+    ],
+  });
+  api.tickets.comments.mockResolvedValue([]);
+  const page = await renderBoard();
+  try {
+    await act(async () =>
+      (
+        page.container.querySelector('[data-testid="board-card-ticket-3"]') as HTMLButtonElement
+      ).click(),
+    );
+    await settle();
+    const plan = document.querySelector('[data-testid="ticket-plan"]')!;
+    expect(plan.textContent).toContain("Done when Linked from the README");
+    expect(plan.textContent).toContain("Waits on RAK-1, RAK-2");
+    const steps = Array.from(plan.querySelectorAll('[role="checkbox"]'));
+    expect(steps.map((node) => node.getAttribute("aria-checked"))).toEqual(["true", "false"]);
+    expect(steps.every((node) => node.hasAttribute("data-disabled"))).toBe(true);
   } finally {
     await page.cleanup();
   }

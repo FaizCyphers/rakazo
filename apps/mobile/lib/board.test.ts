@@ -18,6 +18,9 @@ const ticket = (id: string, status: TicketStatus): Ticket => ({
   createdAt: "2026-10-01T00:00:00.000Z",
   updatedAt: "2026-10-01T00:00:00.000Z",
   completedAt: null,
+  doneWhen: null,
+  acceptance: [],
+  waitsOn: [],
 });
 
 describe("boardSections", () => {
