@@ -62,6 +62,28 @@ describe("resolveDeploymentModel", () => {
       configured: true,
       hostCredentials: false,
     });
+    // OpenAI and Google run on their own keys too.
+    const direct = { ...both, OPENAI_API_KEY: "sk-openai-key", GEMINI_API_KEY: "gemini-key" };
+    expect(resolveDeploymentModel({ ...direct, PI_DEFAULT_PROVIDER: "openai" })).toEqual({
+      provider: "openai",
+      model: "gpt-6-luna",
+      key: "sk-openai-key",
+      configured: true,
+      hostCredentials: false,
+    });
+    expect(
+      resolveDeploymentModel({
+        ...direct,
+        PI_DEFAULT_PROVIDER: "google",
+        PI_DEFAULT_MODEL: "gemini-4-argon",
+      }),
+    ).toEqual({
+      provider: "google",
+      model: "gemini-4-argon",
+      key: "gemini-key",
+      configured: true,
+      hostCredentials: false,
+    });
     // A provider with no key configured yields no key — never another vendor's.
     expect(
       resolveDeploymentModel({ OPENROUTER_API_KEY: "or-key", PI_DEFAULT_PROVIDER: "anthropic" }),

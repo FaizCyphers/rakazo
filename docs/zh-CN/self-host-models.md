@@ -44,6 +44,8 @@ HTTPS 仍会校验证书；和私有 IP 端点一样，受信任主机名也允�
 | --------------------- | -------------------- | ---------------------------- |
 | `openrouter`（默认）  | `OPENROUTER_API_KEY` | `anthropic/claude-haiku-5.5` |
 | `anthropic`           | `ANTHROPIC_API_KEY`  | `claude-sonnet-5`            |
+| `openai`              | `OPENAI_API_KEY`     | `gpt-6-luna`                 |
+| `google`              | `GEMINI_API_KEY`     | `gemini-3.8-flash`           |
 | `deepseek`            | `DEEPSEEK_API_KEY`   | `deepseek-flash`             |
 
 需要截图计算机工具时，选择支持视觉的模型。
