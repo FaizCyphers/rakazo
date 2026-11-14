@@ -14,6 +14,8 @@ picks the provider and `PI_DEFAULT_MODEL` the model:
 | ---------------------- | -------------------- | ---------------------------- |
 | `openrouter` (default) | `OPENROUTER_API_KEY` | `anthropic/claude-haiku-5.5` |
 | `anthropic`            | `ANTHROPIC_API_KEY`  | `claude-sonnet-5`            |
+| `openai`               | `OPENAI_API_KEY`     | `gpt-6-luna`                 |
+| `google`               | `GEMINI_API_KEY`     | `gemini-3.8-flash`           |
 | `deepseek`             | `DEEPSEEK_API_KEY`   | `deepseek-flash`             |
 
 Pick a vision-capable model so screenshot computer tools stay available.
