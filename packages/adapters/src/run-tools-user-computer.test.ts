@@ -94,6 +94,13 @@ describe("userComputerOwner", () => {
     expect(userComputerOwner({ ...own, trigger: "follow_up" })).toBe("user-1");
   });
 
+  it("is the bot owner in a run working one of their tickets", () => {
+    expect(userComputerOwner({ ...own, trigger: "tickets", sourceRole: undefined })).toBe("user-1");
+    expect(
+      userComputerOwner({ ...own, trigger: "tickets", sourceRole: undefined, runUserId: "user-2" }),
+    ).toBeUndefined();
+  });
+
   it.each([
     { trigger: "routine" },
     { trigger: "webhook" },

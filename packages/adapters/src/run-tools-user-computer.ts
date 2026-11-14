@@ -42,8 +42,10 @@ const USER_COMPUTER_UNAVAILABLE =
   'The user\'s computer is not connected. If the task needs it, ask them to open the Rakazo desktop app and turn on "Let bots use this computer" in its settings.';
 
 /**
- * Whose own computer this run may reach: the person whose message started it, when they own the
- * bot. Routines, webhooks, channels, other bots and other people's messages reach no one's.
+ * Whose own computer this run may reach: the person whose message started it, or whose ticket the
+ * bot is working, when they own the bot. Routines, webhooks, channels, other bots and other
+ * people's messages reach no one's. The first use in a space still asks the owner (see
+ * userComputerGate), so a ticket run reaches the computer only after they allow it there.
  */
 export function userComputerOwner(input: {
   trigger: string;
@@ -52,8 +54,12 @@ export function userComputerOwner(input: {
   runUserId: string;
   botUserId: string;
 }): string | undefined {
+  if (input.messagingChannelRun) return undefined;
+  if (input.trigger === "tickets") {
+    return input.runUserId === input.botUserId ? input.runUserId : undefined;
+  }
   if (input.trigger !== "user" && input.trigger !== "follow_up") return undefined;
-  if (input.sourceRole !== "user" || input.messagingChannelRun) return undefined;
+  if (input.sourceRole !== "user") return undefined;
   return input.runUserId === input.botUserId ? input.runUserId : undefined;
 }
 
