@@ -61,7 +61,11 @@ export function orderAutoPool(
   if (first) ledger.book(first.plan.connectionKey, BOOKED_POINTS[effort]);
   return picks.map(({ plan, rung }) => {
     const { choice } = plans.find((entry) => entry.connectionKey === plan.connectionKey)!;
-    return { ...choice, modelId: rung.modelId, thinkingLevel: rung.thinkingLevel };
+    return {
+      ...choice,
+      modelId: rung.modelId,
+      thinkingLevel: rung.thinkingLevel as ModelRoleChoice["thinkingLevel"],
+    };
   });
 }
 
