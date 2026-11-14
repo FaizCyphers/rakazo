@@ -32,6 +32,7 @@ import {
   createRunRuntime,
   createRunSandbox,
   createRunSecretWriter,
+  createStuckTicketSweeper,
   createTicketChangeNotifier,
   ExpoPushProvider,
   GraphileJobPublisher,
@@ -277,6 +278,7 @@ async function main() {
           ),
       reconcileHomeStorage: homeStorageSweeper(home),
       reconcileDeadJobs: inMemoryJobs ? undefined : createDeadJobPruner(pool),
+      reconcileStuckTickets: createStuckTicketSweeper(() => executor.sweepStuckTickets()),
     },
     { messagingDelivery, teamChat },
   );

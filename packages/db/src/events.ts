@@ -174,6 +174,8 @@ export type FinalizeRunInput = FinalizeRunBase &
         error: string;
         /** Reply text the user saw streaming before the failure, kept as a bot message. */
         partialReply?: MessageBlock[];
+        /** Writes that commit with the failure, such as scheduling a retry of its ticket. */
+        onFailed?: (tx: Prisma.TransactionClient) => Promise<void>;
       }
   );
 
@@ -852,6 +854,7 @@ async function finalizeRunOnce(
     if (input.outcome === "completed") await input.onCompleted?.(tx);
 
     if (input.outcome === "failed") {
+      await input.onFailed?.(tx);
       // Before the partial reply below is saved: a reply the failure cut short answers no
       // steering, so the steering it was answering still gets a run of its own.
       await discardAnsweredSteering(tx, input);

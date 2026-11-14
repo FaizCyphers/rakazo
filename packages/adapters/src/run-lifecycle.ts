@@ -29,6 +29,8 @@ import type { RunComputerUseState, RunLeaseState } from "./run-context.js";
 import { notifyRun } from "./run-notifications.js";
 import type { TakeoverResumeCheckpoint } from "./takeover-resume.js";
 import { continueRunClaimFence, TAKEOVER_RESUME_CHECKPOINTS } from "./takeover-resume.js";
+import type { TicketRecoveryApplied } from "./ticket-recovery.js";
+import { finishTicketRecovery, recordTicketRunFailure } from "./ticket-recovery.js";
 
 /**
  * Avoid an expensive remote workspace export when a turn never touched the computer. A failed
@@ -95,6 +97,7 @@ export async function failRunBeforeTurn(
   lease: { attemptId: string; workerId: string; fence: number },
   message: string,
 ): Promise<boolean> {
+  let stuckTicket: TicketRecoveryApplied | null = null;
   const failed = await deps.events.finalizeRun({
     spaceId: run.spaceId,
     threadId: run.threadId,
@@ -106,8 +109,12 @@ export async function failRunBeforeTurn(
     leaseFence: lease.fence,
     outcome: "failed",
     error: message,
+    onFailed: async (tx) => {
+      stuckTicket = await recordTicketRunFailure(tx, deps.jobs, run.taskId);
+    },
   });
   if (!failed) return false;
+  if (stuckTicket) await finishTicketRecovery(deps, stuckTicket);
   await enqueueSteeringContinuation(deps, failed.continuationRunId);
   if (run.trigger === "bot_message") {
     await returnBotMessageOutcome(

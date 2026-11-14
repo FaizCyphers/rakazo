@@ -74,6 +74,7 @@ const payloadSchemas = {
     tokenDigest: z.string().min(1),
   }),
   "ticket.verify": z.object({ runId: z.string().min(1) }),
+  "ticket.recover": z.object({ ticketId: z.string().min(1) }),
 } satisfies { [Name in BackgroundJobName]: z.ZodType<BackgroundJobPayloads[Name]> };
 
 export function parseBackgroundJob(name: string, payload: unknown): BackgroundJob {
@@ -245,6 +246,21 @@ export function ticketVerifyJob(ticketId: string, runId: string, availableAt: Da
     payload: { runId },
     availableAt,
     replaceKey: ticketVerifyJobKey(ticketId, runId),
+    maxAttempts: 5,
+  };
+}
+
+export function ticketRecoverJobKey(ticketId: string): string {
+  return `ticket.recover:${ticketId}`;
+}
+
+/** One stuck ticket's next try, due when its backoff ends. Replaces any earlier one. */
+export function ticketRecoverJob(ticketId: string, availableAt: Date): BackgroundJob {
+  return {
+    name: "ticket.recover",
+    payload: { ticketId },
+    availableAt,
+    replaceKey: ticketRecoverJobKey(ticketId),
     maxAttempts: 5,
   };
 }

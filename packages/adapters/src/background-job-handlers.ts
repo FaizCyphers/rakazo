@@ -99,6 +99,14 @@ export function createBackgroundJobHandlers(deps: {
   const delivery = deps.messagingDelivery;
   const run = ({ runId }: { runId: string }) =>
     deps.prisma.run.findUnique({ where: { id: runId }, select: OWNER });
+  // The ticket's bot works it, so the job acts for that bot's owner.
+  const ticket = async ({ ticketId }: { ticketId: string }) => {
+    const row = await deps.prisma.ticket.findUnique({
+      where: { id: ticketId },
+      select: { spaceId: true, assigneeBot: { select: { userId: true } } },
+    });
+    return row?.assigneeBot ? { spaceId: row.spaceId, userId: row.assigneeBot.userId } : null;
+  };
   const routine = ({ routineId }: { routineId: string }) =>
     deps.prisma.routine.findUnique({ where: { id: routineId }, select: OWNER });
   const computer = ({ computerId }: { computerId: string }) =>
@@ -238,6 +246,9 @@ export function createBackgroundJobHandlers(deps: {
     }),
     "ticket.verify": asOwner(run, async ({ runId }) => {
       await deps.executor.verifyTicketRun(runId);
+    }),
+    "ticket.recover": asOwner(ticket, async ({ ticketId }) => {
+      await deps.executor.retryStuckTicket(ticketId);
     }),
     // A receipt belongs to a device's push token, not to a Space.
     "push.receipt": async (payload) => {

@@ -234,6 +234,7 @@ export * from "./team-chat-judge.js";
 export * from "./team-chat-messaging.js";
 export * from "./third-party-connector-emulator.js";
 export * from "./ticket-changes.js";
+export { createStuckTicketSweeper } from "./ticket-recovery.js";
 export * from "./ticket-tools.js";
 export { dispatcherFetch } from "./undici-fetch.js";
 export * from "./user-device-emulator.js";
