@@ -5,10 +5,24 @@ import {
   hasLab,
   isTicketCompletedStatus,
   resolveLabs,
+  TICKET_STATUSES,
   TicketStatusSchema,
 } from "@rakazo/contracts";
-import type { PrismaClient } from "@rakazo/db";
+import type { Prisma, PrismaClient } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+
+const COMPLETED_STATUSES = TICKET_STATUSES.filter(isTicketCompletedStatus);
+
+/** Whether a ticket waits on any ticket that is not complete yet. */
+export async function waitsOnIncomplete(
+  tx: Pick<Prisma.TransactionClient, "ticketDependency">,
+  ticketId: string,
+): Promise<boolean> {
+  const open = await tx.ticketDependency.count({
+    where: { ticketId, dependsOnTicket: { status: { notIn: COMPLETED_STATUSES } } },
+  });
+  return open > 0;
+}
 
 /** Assignment wakes only its current owner, without posting a chat message. */
 export async function wakeTicketAssignee(
@@ -23,6 +37,8 @@ export async function wakeTicketAssignee(
     if (!ticket) return null;
     const status = TicketStatusSchema.safeParse(ticket.status);
     if (!status.success || isTicketCompletedStatus(status.data)) return null;
+    // A ticket waiting on unfinished tickets starts when the last of them completes.
+    if (await waitsOnIncomplete(tx, ticket.id)) return null;
     const bot = await tx.bot.findFirst({
       where: { id: input.botId, spaceId: input.spaceId, archivedAt: null },
       select: { id: true, userId: true, thread: { select: { id: true } } },

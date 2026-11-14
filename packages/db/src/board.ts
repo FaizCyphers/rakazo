@@ -1,6 +1,14 @@
-import type { Board, Ticket, TicketComment, TicketPriority, TicketStatus } from "@rakazo/contracts";
+import type {
+  Board,
+  Ticket,
+  TicketAcceptanceStep,
+  TicketComment,
+  TicketPriority,
+  TicketStatus,
+} from "@rakazo/contracts";
 import {
   parseTicketRef,
+  TicketAcceptanceStepSchema,
   TicketPrioritySchema,
   TicketStatusSchema,
   ticketRef,
@@ -49,21 +57,32 @@ export async function allocateTicketNumber(
   return incremented.nextNumber - 1;
 }
 
+/** Loads the numbers of the tickets a ticket waits on, for `toTicketDto`. */
+export const TICKET_WAITS_ON_INCLUDE = {
+  waitsOn: { select: { dependsOnTicket: { select: { number: true } } } },
+} satisfies Prisma.TicketInclude;
+
+export type TicketWithWaitsOn = TicketRow & {
+  waitsOn?: Array<{ dependsOnTicket: { number: number } }>;
+};
+
 export async function findTicket(
-  prisma: PrismaClient,
+  prisma: Pick<PrismaClient, "ticket">,
   spaceId: string,
   board: { id: string; ticketPrefix: string },
   input: { id?: string; ref?: string },
-): Promise<TicketRow | null> {
+) {
   if (input.id) {
     return prisma.ticket.findFirst({
       where: { id: input.id, spaceId, boardId: board.id },
+      include: TICKET_WAITS_ON_INCLUDE,
     });
   }
   const parsed = input.ref ? parseTicketRef(input.ref, board.ticketPrefix) : null;
   if (!parsed) return null;
   return prisma.ticket.findFirst({
     where: { number: parsed.number, spaceId, boardId: board.id },
+    include: TICKET_WAITS_ON_INCLUDE,
   });
 }
 
@@ -90,7 +109,16 @@ function coerceTicketPriority(value: string | null | undefined): TicketPriority 
   return parsed.success ? parsed.data : "normal";
 }
 
-export function toTicketDto(row: TicketRow, ticketPrefix: string): Ticket {
+/** Malformed stored steps are dropped rather than failing the whole ticket. */
+export function coerceTicketAcceptance(value: unknown): TicketAcceptanceStep[] {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const parsed = TicketAcceptanceStepSchema.safeParse(item);
+    return parsed.success ? [parsed.data] : [];
+  });
+}
+
+export function toTicketDto(row: TicketWithWaitsOn, ticketPrefix: string): Ticket {
   return {
     id: row.id,
     boardId: row.boardId,
@@ -107,6 +135,12 @@ export function toTicketDto(row: TicketRow, ticketPrefix: string): Ticket {
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
     completedAt: row.completedAt ? row.completedAt.toISOString() : null,
+    doneWhen: row.doneWhen ?? null,
+    acceptance: coerceTicketAcceptance(row.acceptance),
+    waitsOn: (row.waitsOn ?? [])
+      .map((link) => link.dependsOnTicket.number)
+      .sort((a, b) => a - b)
+      .map((number) => ticketRef(ticketPrefix, number)),
   };
 }
 

@@ -50,6 +50,7 @@ import { scheduleCreateRefusal } from "./run-tools-tasks.js";
 import { USER_COMPUTER_TOOLS } from "./run-tools-user-computer.js";
 import { SCHEDULE_TOOL_NAMES } from "./schedule-tools.js";
 import { SKILL_TOOL_NAMES } from "./skill-tools.js";
+import { prepareTicketPlan } from "./ticket-tools.js";
 import { refusal } from "./tool-refusal.js";
 import { argumentGiven, dropUnchangedOwnBotArgs } from "./update-bot-patch.js";
 import type { VaultCardUse, VaultLoginUse } from "./vault-card-use.js";
@@ -462,6 +463,18 @@ export async function prepareToolRequest(
     args = prepared.canonical;
     request.fleetSummary = prepared.summary;
   }
+  if (name === "ticket_plan" && nextApprovedTool !== name) {
+    // The card lists every ticket, owner and prerequisite; an approved replay runs what it showed.
+    const prepared = await prepareTicketPlan(
+      deps,
+      { spaceId: run.spaceId, userId: run.userId, botId: bot.id },
+      args,
+      ctx.secrets,
+    );
+    if ("error" in prepared) return refusal("ticket_plan_invalid", prepared.error);
+    args = prepared.canonical;
+    request.fleetSummary = prepared.summary;
+  }
   if (name === "respond_agent_connection") {
     if (nextApprovedTool !== name) {
       const pending = await prepareAgentConnectionResponse(
@@ -587,7 +600,12 @@ export async function prepareToolRequest(
       request.effectRequest = args;
   }
   request.args = args;
-  if (name === "respond_agent_connection" || name === "update_bot" || isFleetApprovalTool(name))
+  if (
+    name === "respond_agent_connection" ||
+    name === "update_bot" ||
+    name === "ticket_plan" ||
+    isFleetApprovalTool(name)
+  )
     request.effectRequest = args;
   return undefined;
 }

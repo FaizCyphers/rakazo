@@ -9,6 +9,7 @@ import {
   IsolationError,
   listBoards,
   listTicketComments,
+  TICKET_WAITS_ON_INCLUDE,
   toBoardDto,
   toTicketCommentDto,
   toTicketDto,
@@ -126,6 +127,7 @@ export function boardsRoutes(ctx: RouterContext) {
         };
         const rows = await deps.prisma.ticket.findMany({
           where,
+          include: TICKET_WAITS_ON_INCLUDE,
           orderBy: [{ updatedAt: "desc" }, { id: "desc" }],
         });
         return { tickets: rows.map((row) => toTicketDto(row, board.ticketPrefix)) };

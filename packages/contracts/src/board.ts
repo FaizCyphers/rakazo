@@ -21,6 +21,13 @@ const TICKET_PREFIX_MAX_LENGTH = 12;
 // Ticket numbers are stored as PostgreSQL Int values.
 const TICKET_NUMBER_MAX = 2_147_483_647;
 export const TICKET_COMMENT_MAX_LENGTH = 10_000;
+export const TICKET_DONE_WHEN_MAX_LENGTH = 500;
+export const TICKET_ACCEPTANCE_MAX_STEPS = 20;
+export const TICKET_ACCEPTANCE_STEP_MAX_LENGTH = 500;
+export const TICKET_WAITS_ON_MAX = 20;
+export const TICKET_PLAN_MAX_TICKETS = 20;
+const TICKET_PLAN_KEY_MAX_LENGTH = 40;
+const TICKET_REFERENCE_MAX_LENGTH = 120;
 
 const TicketPrefixSchema = z
   .string()
@@ -83,6 +90,22 @@ export const TicketCommentSchema = z.object({
 });
 export type TicketComment = z.infer<typeof TicketCommentSchema>;
 
+export const TicketAcceptanceStepSchema = z.object({
+  text: z.string().trim().min(1).max(TICKET_ACCEPTANCE_STEP_MAX_LENGTH),
+  checked: z.boolean().default(false),
+});
+export type TicketAcceptanceStep = z.infer<typeof TicketAcceptanceStepSchema>;
+
+const DoneWhenSchema = z.string().trim().min(1).max(TICKET_DONE_WHEN_MAX_LENGTH);
+const AcceptanceSchema = z.array(TicketAcceptanceStepSchema).max(TICKET_ACCEPTANCE_MAX_STEPS);
+/** Tickets that must be complete before this one starts, by ref (RAK-3) or id. */
+const WaitsOnSchema = z
+  .array(z.string().trim().min(1).max(TICKET_REFERENCE_MAX_LENGTH))
+  .max(TICKET_WAITS_ON_MAX)
+  .refine((refs) => new Set(refs.map((ref) => ref.toUpperCase())).size === refs.length, {
+    message: "Each ticket can be listed only once",
+  });
+
 export const TicketSchema = z.object({
   id: Id,
   boardId: Id,
@@ -99,6 +122,10 @@ export const TicketSchema = z.object({
   createdAt: z.string(),
   updatedAt: z.string(),
   completedAt: z.string().nullable(),
+  doneWhen: z.string().nullable(),
+  acceptance: z.array(TicketAcceptanceStepSchema),
+  /** Refs of the tickets this one waits on. */
+  waitsOn: z.array(z.string()),
 });
 export type Ticket = z.infer<typeof TicketSchema>;
 
@@ -129,6 +156,9 @@ export const CreateTicketInput = z.object({
   description: z.string().max(TICKET_DESCRIPTION_MAX_LENGTH).optional(),
   priority: TicketPrioritySchema.default(DEFAULT_TICKET_PRIORITY),
   assigneeBotId: Id,
+  doneWhen: DoneWhenSchema.optional(),
+  acceptance: AcceptanceSchema.optional(),
+  waitsOn: WaitsOnSchema.optional(),
 });
 export type CreateTicketInput = z.infer<typeof CreateTicketInput>;
 
@@ -139,8 +169,50 @@ export const UpdateTicketInput = z.object({
   priority: TicketPrioritySchema.nullable().optional(),
   status: TicketStatusSchema.optional(),
   assigneeBotId: Id.optional(),
+  doneWhen: DoneWhenSchema.nullable().optional(),
+  acceptance: AcceptanceSchema.optional(),
+  /** Replaces the whole list. */
+  waitsOn: WaitsOnSchema.optional(),
 });
 export type UpdateTicketInput = z.infer<typeof UpdateTicketInput>;
+
+export const TicketPlanItemSchema = z.object({
+  /** Names this ticket within the plan, so other tickets can wait on it. */
+  key: z.string().trim().min(1).max(TICKET_PLAN_KEY_MAX_LENGTH),
+  title: z.string().trim().min(1).max(TICKET_TITLE_MAX_LENGTH),
+  description: z.string().max(TICKET_DESCRIPTION_MAX_LENGTH).optional(),
+  priority: TicketPrioritySchema.default(DEFAULT_TICKET_PRIORITY),
+  assigneeBotId: Id,
+  doneWhen: DoneWhenSchema.optional(),
+  acceptance: AcceptanceSchema.optional(),
+  /** Keys of other tickets in this plan, or refs of tickets already on the board. */
+  waitsOn: WaitsOnSchema.default([]),
+});
+export type TicketPlanItem = z.infer<typeof TicketPlanItemSchema>;
+
+export const TicketPlanInput = z
+  .object({ tickets: z.array(TicketPlanItemSchema).min(1).max(TICKET_PLAN_MAX_TICKETS) })
+  .superRefine((plan, ctx) => {
+    const keys = new Set<string>();
+    plan.tickets.forEach((item, index) => {
+      const key = item.key.toUpperCase();
+      if (keys.has(key))
+        ctx.addIssue({
+          code: "custom",
+          message: `Duplicate key ${item.key}`,
+          path: ["tickets", index, "key"],
+        });
+      // A key that reads like a ref would be ambiguous in waitsOn.
+      if (parseTicketRef(item.key))
+        ctx.addIssue({
+          code: "custom",
+          message: `Key ${item.key} looks like a ticket ref; use a plain word`,
+          path: ["tickets", index, "key"],
+        });
+      keys.add(key);
+    });
+  });
+export type TicketPlanInput = z.infer<typeof TicketPlanInput>;
 
 export const MoveTicketInput = z.object({
   id: Id,
