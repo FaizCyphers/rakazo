@@ -117,6 +117,7 @@ export * from "./thread-message-updates.js";
 export * from "./thread-scroll.js";
 export * from "./thread-snapshot-events.js";
 export * from "./thread-subscription.js";
+export * from "./ticket-recovery.js";
 export * from "./time-separators.js";
 export * from "./tool-activity.js";
 export * from "./translate.js";

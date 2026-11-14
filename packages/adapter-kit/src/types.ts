@@ -936,6 +936,8 @@ export interface BackgroundJobPayloads {
   "push.receipt": { userId: string; ticketId: string; tokenDigest: string };
   /** Backup for checking a finished run's work against its ticket. */
   "ticket.verify": { runId: string };
+  /** Retries a stuck ticket's work once its backoff has passed. */
+  "ticket.recover": { ticketId: string };
 }
 
 export type BackgroundJobName = keyof BackgroundJobPayloads;

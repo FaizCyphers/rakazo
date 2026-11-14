@@ -46,3 +46,23 @@ gives it its two checks again.
 
 Turn on **Require sign-off** on the board to have checked tickets wait in **In review**. Only a
 person can then move a ticket to **Done**; a bot that tries is told to leave it in review.
+
+## When a ticket gets stuck
+
+A ticket is stuck when it is **In progress**, or ready in **To do** with a bot as its owner, and
+nothing is working on it: its last run failed, the server stopped it, or it ended with the ticket
+still open. The server looks at why, as soon as a run fails and again about once a minute, and
+handles each kind on its own:
+
+| Why it stopped | What happens |
+| --- | --- |
+| Cut off: the run was interrupted or ended early | Tried again after 2, then 5 minutes |
+| The model or computer provider was busy or unreachable | Tried again after 2, 10, then 30 minutes, or when the provider says to |
+| A conflict with other work on the server | Tried again after 1, 3, then 10 minutes |
+| Needs you: no model connected, a rejected key or sign-in, an unavailable model, credits or plan | Moves to **Blocked** with the one thing to do, and its bot's owner gets a notification |
+| Anything else | Moves to **Blocked** with a comment saying what went wrong |
+
+Each try wakes the bot with a note to keep its earlier work and carry on. When a kind's tries run
+out, the ticket moves to **Blocked** with a comment. A run you stopped yourself is never tried
+again. Moving or editing a ticket yourself starts its tries over; a ticket you move back to
+**In progress** is picked up again within a few minutes.

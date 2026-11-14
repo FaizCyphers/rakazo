@@ -240,6 +240,7 @@ import {
   recentThreadFilesInstruction,
 } from "./thread-artifacts.js";
 import { loadAgentTicketContext } from "./ticket-context.js";
+import { retryStuckTicket, sweepStuckTickets } from "./ticket-recovery.js";
 import { verifyRunTicket } from "./ticket-verify.js";
 import { appendToolCompletionAudit, toolCompletionOutcome } from "./tool-completion-audit.js";
 import { toolResultFingerprint } from "./tool-loop.js";
@@ -317,6 +318,8 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
     ),
     retryRoutineRun: retryRoutineRun.bind(undefined, baseDeps),
     verifyTicketRun: (runId: string) => verifyRunTicket(baseDeps, runId),
+    retryStuckTicket: (ticketId: string) => retryStuckTicket(baseDeps, ticketId),
+    sweepStuckTickets: () => sweepStuckTickets(baseDeps),
 
     async continueRun(runId: string, workerId: string, onRunStarted?: () => void) {
       let deps = baseDeps;

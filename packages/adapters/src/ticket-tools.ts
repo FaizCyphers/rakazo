@@ -25,6 +25,7 @@ import {
 import type { FleetCardSummary } from "./approval-ask.js";
 import { MAX_APPROVAL_DETAIL_LENGTH, MAX_APPROVAL_SUMMARY_LENGTH } from "./approval-ask.js";
 import type { TicketChangeNotifier } from "./ticket-changes.js";
+import { clearedTicketRecovery } from "./ticket-recovery.js";
 import { waitsOnIncomplete } from "./ticket-wake.js";
 import { sliceWellFormed } from "./utf8.js";
 
@@ -399,6 +400,8 @@ export async function updateTicket(
           });
         unblocked = wasWaiting && allComplete(prerequisites);
       }
+      // A person moving or editing the ticket starts its recovery over.
+      const recovery = input.botId ? undefined : await clearedTicketRecovery(tx, current.id);
       const completing =
         data.status !== undefined &&
         isTicketCompletedStatus(data.status) &&
@@ -412,6 +415,7 @@ export async function updateTicket(
           ...(data.assigneeBotId !== undefined ? { assigneeBotId: data.assigneeBotId } : {}),
           ...(data.doneWhen !== undefined ? { doneWhen: data.doneWhen } : {}),
           ...(data.acceptance !== undefined ? { acceptance: data.acceptance } : {}),
+          ...(recovery ? { recovery } : {}),
           ...(data.status !== undefined
             ? {
                 status: data.status,

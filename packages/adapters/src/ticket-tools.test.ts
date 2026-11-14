@@ -193,6 +193,8 @@ function mutationDeps() {
         ...data,
       })),
     },
+    // The ticket's latest run ended in a failure.
+    run: { findFirst: vi.fn(async () => ({ id: "run-1", status: "failed", error: "Boom" })) },
     $queryRaw: vi.fn(async () => []),
   };
   const prisma = {
@@ -375,9 +377,15 @@ describe("ticket mutations", () => {
       status: "done",
     });
     expect(byPerson).toHaveProperty("ticket.status", "done");
-    // Moving it themselves gives the work its checks again.
+    // Moving it themselves gives the work its checks again, and starts its recovery over without
+    // acting on the failure they saw.
     expect(s.tx.ticket.update).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ verifyFailures: null }) }),
+      expect.objectContaining({
+        data: expect.objectContaining({
+          verifyFailures: null,
+          recovery: { runId: "run-1", tries: {} },
+        }),
+      }),
     );
   });
 

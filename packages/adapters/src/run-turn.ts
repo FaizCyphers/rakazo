@@ -105,6 +105,8 @@ import {
 } from "./silent-reply.js";
 import { isStrategicInitiativeRun } from "./strategic-initiative.js";
 import { takeoverCheckpointOf } from "./takeover-resume.js";
+import type { TicketRecoveryApplied } from "./ticket-recovery.js";
+import { finishTicketRecovery, recordTicketRunFailure } from "./ticket-recovery.js";
 import { recordTicketVerification, verifyRunTicket } from "./ticket-verify.js";
 import {
   appendToolCompletionAudit,
@@ -1170,6 +1172,7 @@ export async function failRun(
       ? [{ kind: "text" as const, text: partialText }]
       : [];
   await ctx.settleRunningHelpers();
+  let stuckTicket: TicketRecoveryApplied | null = null;
   const failed = await deps.events.finalizeRun({
     spaceId: run.spaceId,
     threadId: thread.id,
@@ -1182,8 +1185,12 @@ export async function failRun(
     outcome: "failed",
     error: message,
     ...(partialReply.length > 0 ? { partialReply } : {}),
+    onFailed: async (tx) => {
+      stuckTicket = await recordTicketRunFailure(tx, deps.jobs, run.taskId);
+    },
   });
   if (!failed) return;
+  if (stuckTicket) await finishTicketRecovery(deps, stuckTicket);
   if (
     error instanceof TransientModelError ||
     error instanceof ModelAccountError ||

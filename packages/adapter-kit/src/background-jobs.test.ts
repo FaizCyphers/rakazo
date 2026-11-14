@@ -41,6 +41,7 @@ function handlers(): BackgroundJobHandlers {
     "media.poll": vi.fn(async () => undefined),
     "push.receipt": vi.fn(async () => undefined),
     "ticket.verify": vi.fn(async () => undefined),
+    "ticket.recover": vi.fn(async () => undefined),
   };
 }
 
