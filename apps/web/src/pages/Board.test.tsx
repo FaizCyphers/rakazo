@@ -18,6 +18,7 @@ const api = vi.hoisted(() => ({
   tickets: {
     list: vi.fn(),
     update: vi.fn(),
+    move: vi.fn(),
     create: vi.fn(),
     comment: vi.fn(),
     comments: vi.fn(),
@@ -578,6 +579,42 @@ it("does not repeat a posted comment a refresh already brought", async () => {
     await act(async () => answerPost(posted));
     await settle();
     expect(commentsText(page).split("New note")).toHaveLength(2);
+  } finally {
+    await page.cleanup();
+  }
+});
+
+it("moves a ticket to the column it is dropped on", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  api.bots.list.mockResolvedValue([bot("bot-1", "Helper")]);
+  api.tickets.list.mockResolvedValue({
+    tickets: [ticket("Ship", "ticket-1", "todo", "RAK-1", "bot-1", "Details")],
+  });
+  api.tickets.move.mockResolvedValue({});
+  const page = await renderBoard();
+  try {
+    const card = page.container.querySelector('[data-testid="board-card-ticket-1"]')!;
+    const doing = page.container.querySelector('[data-testid="board-column-doing"]')!;
+    const dataTransfer = { setData: vi.fn(), effectAllowed: "", dropEffect: "" };
+    const fire = (target: Element, type: string) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      Object.assign(event, { dataTransfer });
+      target.dispatchEvent(event);
+      return event;
+    };
+    await act(async () => {
+      fire(card, "dragstart");
+    });
+    let over!: Event;
+    await act(async () => {
+      over = fire(doing, "dragover");
+    });
+    expect(over.defaultPrevented).toBe(true);
+    await act(async () => {
+      fire(doing, "drop");
+    });
+    await settle();
+    expect(api.tickets.move).toHaveBeenCalledWith({ id: "ticket-1", status: "doing" });
   } finally {
     await page.cleanup();
   }
