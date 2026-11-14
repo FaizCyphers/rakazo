@@ -92,6 +92,7 @@ export function toBoardDto(row: BoardRow): Board {
     spaceId: row.spaceId,
     name: row.name,
     ticketPrefix: row.ticketPrefix,
+    requireSignOff: row.requireSignOff ?? false,
     createdAt: row.createdAt.toISOString(),
     updatedAt: row.updatedAt.toISOString(),
   };

@@ -1237,6 +1237,8 @@ model Task {
   userId    String
   prompt    String
   status    String
+  /// The ticket a ticket wake started this task for; its runs' work is checked against it.
+  ticketId  String?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   runs      Run[]
@@ -2517,6 +2519,8 @@ model Board {
   name         String   @default("Board")
   ticketPrefix String   @default("RAK")
   nextNumber   Int      @default(1)
+  /// When true, checked tickets wait in review for a person to move them to done.
+  requireSignOff Boolean?
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
   tickets      Ticket[]
@@ -2548,6 +2552,10 @@ model Ticket {
   doneWhen        String?
   /// Acceptance steps as [{ text, checked }].
   acceptance      Json?
+  /// The latest check of a finished run's work: pending with the run's reply, or its result.
+  verification    Json?
+  /// Checks failed since the ticket last passed or a person moved it.
+  verifyFailures  Int?
   comments        TicketComment[]
   waitsOn         TicketDependency[] @relation("TicketWaitsOn")
   neededBy        TicketDependency[] @relation("TicketNeededBy")

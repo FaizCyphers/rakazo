@@ -236,6 +236,9 @@ export function createBackgroundJobHandlers(deps: {
     "media.poll": asOwner(mediaJob, async (payload) => {
       await pollMediaVideo(deps, payload);
     }),
+    "ticket.verify": asOwner(run, async ({ runId }) => {
+      await deps.executor.verifyTicketRun(runId);
+    }),
     // A receipt belongs to a device's push token, not to a Space.
     "push.receipt": async (payload) => {
       await runAsSystem("check a push receipt", () => deps.notifications?.checkReceipt(payload));

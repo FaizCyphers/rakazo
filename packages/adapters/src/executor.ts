@@ -240,6 +240,7 @@ import {
   recentThreadFilesInstruction,
 } from "./thread-artifacts.js";
 import { loadAgentTicketContext } from "./ticket-context.js";
+import { verifyRunTicket } from "./ticket-verify.js";
 import { appendToolCompletionAudit, toolCompletionOutcome } from "./tool-completion-audit.js";
 import { toolResultFingerprint } from "./tool-loop.js";
 import {
@@ -315,6 +316,7 @@ export function createRunExecutor(executorDeps: ExecutorDeps) {
       baseDeps,
     ),
     retryRoutineRun: retryRoutineRun.bind(undefined, baseDeps),
+    verifyTicketRun: (runId: string) => verifyRunTicket(baseDeps, runId),
 
     async continueRun(runId: string, workerId: string, onRunStarted?: () => void) {
       let deps = baseDeps;

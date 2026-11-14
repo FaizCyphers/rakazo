@@ -166,6 +166,8 @@ export type FinalizeRunInput = FinalizeRunBase &
         /** Steps may carry their tool and kept calls; they are stored apart from the blocks. */
         blocks: MessageBlock[];
         markUnread?: boolean;
+        /** Writes that commit with the completion, such as a backup job for follow-up work. */
+        onCompleted?: (tx: Prisma.TransactionClient) => Promise<void>;
       }
     | {
         outcome: "failed";
@@ -847,6 +849,7 @@ async function finalizeRunOnce(
       data: { status: input.outcome },
     });
     if (task.count !== 1) throw new Error("Run task was not available to finalize");
+    if (input.outcome === "completed") await input.onCompleted?.(tx);
 
     if (input.outcome === "failed") {
       // Before the partial reply below is saved: a reply the failure cut short answers no

@@ -24,3 +24,25 @@ A bot can lay out a plan of up to 20 tickets with what each waits on. In Ask and
 approval card lists every ticket, its owner and what it waits on, and approving creates them all
 at once. A plan too long to show whole on the card is refused. Tickets that wait on each other in
 a loop are refused too.
+
+## Checking finished work
+
+When a bot's run on a ticket ends, and the ticket has acceptance steps or says what done means,
+the server checks the work instead of trusting the bot to close its own ticket. A model reads the
+ticket, the bot's final reply and recent comments, and judges each step as passed or not. It uses
+your approval model, or the bot's own model when that one only answers pass or ask. Its cost is
+counted apart from the bot's answers.
+
+- Every step passed: the steps are ticked, a comment lists them, and the ticket moves to **Done**,
+  which starts any tickets waiting on it.
+- Some steps failed the first time: a comment lists them, and the bot is woken once more with
+  what is missing.
+- Failed again, or the check could not be made: the ticket moves to **Blocked** with a comment,
+  for you to look at.
+
+A run that failed, was stopped, or is waiting on your answer is not checked, and neither is a
+ticket its bot already moved to **Done**, **Won't do** or **Blocked**. Moving a ticket yourself
+gives it its two checks again.
+
+Turn on **Require sign-off** on the board to have checked tickets wait in **In review**. Only a
+person can then move a ticket to **Done**; a bot that tries is told to leave it in review.

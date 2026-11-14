@@ -73,6 +73,7 @@ const payloadSchemas = {
     ticketId: z.string().min(1),
     tokenDigest: z.string().min(1),
   }),
+  "ticket.verify": z.object({ runId: z.string().min(1) }),
 } satisfies { [Name in BackgroundJobName]: z.ZodType<BackgroundJobPayloads[Name]> };
 
 export function parseBackgroundJob(name: string, payload: unknown): BackgroundJob {
@@ -230,6 +231,21 @@ export function messagingSendJob(outboundId: string, availableAt: Date): Backgro
     availableAt,
     replaceKey: messagingSendJobKey(outboundId),
     maxAttempts: MESSAGING_SEND_MAX_ATTEMPTS,
+  };
+}
+
+export function ticketVerifyJobKey(ticketId: string, runId: string): string {
+  return `ticket.verify:${ticketId}:${runId}`;
+}
+
+/** Backup for checking one finished run's work, due once the direct check has had its time. */
+export function ticketVerifyJob(ticketId: string, runId: string, availableAt: Date): BackgroundJob {
+  return {
+    name: "ticket.verify",
+    payload: { runId },
+    availableAt,
+    replaceKey: ticketVerifyJobKey(ticketId, runId),
+    maxAttempts: 5,
   };
 }
 

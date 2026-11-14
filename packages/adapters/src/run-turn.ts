@@ -105,6 +105,7 @@ import {
 } from "./silent-reply.js";
 import { isStrategicInitiativeRun } from "./strategic-initiative.js";
 import { takeoverCheckpointOf } from "./takeover-resume.js";
+import { recordTicketVerification, verifyRunTicket } from "./ticket-verify.js";
 import {
   appendToolCompletionAudit,
   logLoopGuardStop,
@@ -977,6 +978,7 @@ export async function completeRun(ctx: RunContext) {
   );
   await ctx.settleRunningHelpers();
   const answeredMessageIds = await conversationRetentionMessages(ctx);
+  let ticketToVerify: string | null = null;
   const completed = await deps.events.finalizeRun({
     spaceId: run.spaceId,
     threadId: thread.id,
@@ -989,6 +991,13 @@ export async function completeRun(ctx: RunContext) {
     outcome: "completed",
     blocks,
     markUnread: !groupSilentEnd && marksUnread,
+    onCompleted: async (tx) => {
+      ticketToVerify = await recordTicketVerification(tx, deps.jobs, {
+        runId,
+        taskId: run.taskId,
+        reply: text,
+      });
+    },
   });
   if (!completed) return;
   ctx.stopHeartbeatAfterCompletion();
@@ -1058,6 +1067,12 @@ export async function completeRun(ctx: RunContext) {
     }
   } catch (error) {
     getLogger().error("history.compact enqueue failed", error);
+  }
+  // Its backup job checks the work if this does not finish.
+  if (ticketToVerify) {
+    await verifyRunTicket(deps, runId).catch((error) =>
+      getLogger().error("ticket verification deferred to its backup job", error),
+    );
   }
 }
 

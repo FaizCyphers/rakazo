@@ -2,6 +2,7 @@ import type { PrismaClient } from "@rakazo/db";
 import { describe, expect, it, vi } from "vitest";
 import type { TicketChange } from "./ticket-changes.js";
 import { createTicketChangeNotifier } from "./ticket-changes.js";
+import { TICKET_VERIFY_NOTICE } from "./ticket-wake.js";
 
 const change: TicketChange = {
   spaceId: "space-1",
@@ -10,7 +11,12 @@ const change: TicketChange = {
   assigneeBotId: "bot-1",
   wakeAssignee: true,
 };
-function setup(ownerLabs: string[], status = "todo", openPrerequisites = 0) {
+function setup(
+  ownerLabs: string[],
+  status = "todo",
+  openPrerequisites = 0,
+  extra: Record<string, unknown> = {},
+) {
   const notify = vi.fn(async () => {});
   const enqueue = vi.fn(async () => {});
   const createRun = vi.fn(async () => ({ id: "run-1" }));
@@ -22,6 +28,7 @@ function setup(ownerLabs: string[], status = "todo", openPrerequisites = 0) {
         status,
         number: 1,
         board: { ticketPrefix: "RAK" },
+        ...extra,
       })),
     },
     bot: {
@@ -80,6 +87,22 @@ describe("ticket changes", () => {
       expect(s.enqueue).not.toHaveBeenCalled();
     },
   );
+  it("tells the bot its work will be checked, and what the last check found", async () => {
+    const s = setup(["board"], "doing", 0, { doneWhen: null, acceptance: [{ text: "Tests" }] });
+    await s.changes({ ...change, wakeNote: "Tests failed." });
+    expect(s.createTask).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        ticketId: "ticket-1",
+        prompt: expect.stringContaining(`${TICKET_VERIFY_NOTICE}\n\nTests failed.`),
+      }),
+    });
+
+    const plain = setup(["board"]);
+    await plain.changes(change);
+    expect(plain.createTask).toHaveBeenCalledWith({
+      data: expect.objectContaining({ prompt: expect.not.stringContaining(TICKET_VERIFY_NOTICE) }),
+    });
+  });
   it("does not wake a ticket still waiting on unfinished tickets", async () => {
     const s = setup(["board"], "todo", 1);
     await s.changes(change);

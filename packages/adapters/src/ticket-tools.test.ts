@@ -346,6 +346,40 @@ describe("ticket mutations", () => {
       }),
     );
   });
+  it("lets only a person finish a ticket when the board wants sign-off", async () => {
+    const s = mutationDeps();
+    const signOff = board({ requireSignOff: true });
+    s.prisma.board.findUnique.mockResolvedValue(signOff);
+    await s.tx.ticket.update({ data: { status: "review" } });
+    s.tx.ticket.update.mockClear();
+
+    const byBot = await updateTicket(s.deps, {
+      spaceId: "ws",
+      userId: "user-1",
+      botId: "bot-1",
+      id: "t1",
+      status: "done",
+    });
+    expect(byBot).toEqual({
+      error:
+        "This board needs a person's sign-off: move the ticket to review and they will move it to done.",
+    });
+    expect(s.tx.ticket.update).not.toHaveBeenCalled();
+    expect(s.changes).not.toHaveBeenCalled();
+
+    const byPerson = await updateTicket(s.deps, {
+      spaceId: "ws",
+      userId: "user-1",
+      id: "t1",
+      status: "done",
+    });
+    expect(byPerson).toHaveProperty("ticket.status", "done");
+    // Moving it themselves gives the work its checks again.
+    expect(s.tx.ticket.update).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ verifyFailures: null }) }),
+    );
+  });
+
   it("does not wake a bot creating or assigning a ticket to itself", async () => {
     const s = mutationDeps();
     await createTicket(s.deps, { spaceId: "ws", userId: "user-1", botId: "bot-1", title: "Ship" });

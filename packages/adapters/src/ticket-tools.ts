@@ -119,7 +119,7 @@ async function wouldCycle(
  * The tickets waiting on `ticketId` that can start now that it is complete. Each is locked, so
  * two prerequisites completing at once queue here, and the second sees the first one's commit.
  */
-async function readyDependents(
+export async function readyDependents(
   tx: Pick<Tx, "$queryRaw" | "ticketDependency">,
   ticketId: string,
 ): Promise<Array<{ id: string; assigneeBotId: string }>> {
@@ -367,6 +367,11 @@ export async function updateTicket(
         where: { id: data.id, spaceId: input.spaceId, boardId: board.id },
       });
       if (!current) throw new TicketRefusal("Ticket not found.");
+      // With sign-off on, a checked ticket waits in review and only a person finishes it.
+      if (input.botId && board.requireSignOff && data.status === "done")
+        throw new TicketRefusal(
+          "This board needs a person's sign-off: move the ticket to review and they will move it to done.",
+        );
       let unblocked = false;
       if (prerequisites) {
         const ids = prerequisites.map((row) => row.id);
@@ -403,6 +408,8 @@ export async function updateTicket(
                 completedAt: isTicketCompletedStatus(data.status)
                   ? (current.completedAt ?? new Date())
                   : null,
+                // A person moving the ticket gives the work its checks again.
+                ...(input.botId ? {} : { verifyFailures: null }),
               }
             : {}),
         },

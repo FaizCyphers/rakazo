@@ -26,6 +26,7 @@ import type { MessagingDelivery } from "./messaging-delivery.js";
 import type { CodexLiveCatalog } from "./pi-codex-catalog.js";
 import type { RemoteTransportDependencies } from "./remote-mcp.js";
 import type { TicketChangeNotifier } from "./ticket-changes.js";
+import type { TicketVerifier } from "./ticket-verify.js";
 import type { UserDeviceGateway } from "./user-device-protocol.js";
 
 export interface ExecutorDeps {
@@ -86,6 +87,8 @@ export interface ExecutorDeps {
   userCloudAgents?: UserCloudAgents;
   /** The deployment's payment wallet. Null/omit means purchase tools stay uninjected. */
   paymentWallet?: PaymentWalletProvider | null;
+  /** Judges a finished ticket run's work; defaults to a model call (see ticket-verify). */
+  ticketVerifier?: TicketVerifier;
   /** Optional Auto Review verifier. When omitted, the factory selects from env (llm | jev | scripted). */
   autoReview?: AutoReviewProvider;
   /**

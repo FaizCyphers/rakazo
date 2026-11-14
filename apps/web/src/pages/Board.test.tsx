@@ -9,7 +9,11 @@ import { MemoryRouter } from "react-router-dom";
 import { beforeEach, expect, it, vi } from "vitest";
 
 const api = vi.hoisted(() => ({
-  boards: { subscribe: vi.fn() },
+  boards: {
+    subscribe: vi.fn(),
+    get: vi.fn(async () => ({ id: "board-1", requireSignOff: false })),
+    rename: vi.fn(),
+  },
   bots: { list: vi.fn() },
   tickets: {
     list: vi.fn(),
@@ -51,6 +55,20 @@ vi.mock("@rakazo/ui-web", async (importOriginal) => {
     Input: (props: ComponentProps<"input">) => <input {...props} />,
     NativeSelect: (props: ComponentProps<"select">) => <select {...props} />,
     NativeSelectOption: (props: ComponentProps<"option">) => <option {...props} />,
+    Switch: ({
+      onCheckedChange,
+      size: _size,
+      ...props
+    }: Omit<ComponentProps<"input">, "size"> & {
+      size?: string;
+      onCheckedChange?: (checked: boolean) => void;
+    }) => (
+      <input
+        type="checkbox"
+        onChange={(event) => onCheckedChange?.(event.target.checked)}
+        {...props}
+      />
+    ),
     Textarea: (props: ComponentProps<"textarea">) => <textarea {...props} />,
   };
 });
@@ -244,7 +262,7 @@ it("creates a ticket without a status picker", async () => {
     expect(
       Array.from(page.container.querySelectorAll("label")).map((label) => label.textContent),
     ).not.toContain("Status");
-    const input = page.container.querySelector("input")!;
+    const input = page.container.querySelector("form input")!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
         input,
@@ -316,7 +334,7 @@ it("saves only edits and refreshes comments for the open ticket", async () => {
     expect(page.container.querySelector('[data-testid="ticket-comments"]')?.textContent).toContain(
       "Bot progress",
     );
-    const input = page.container.querySelector("input")!;
+    const input = page.container.querySelector("form input")!;
     await act(async () => {
       Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!.call(
         input,
@@ -432,6 +450,27 @@ it("renders the back control as a plain link", async () => {
     if (!back) throw new Error("Missing back link");
     expect(back.hasAttribute("type")).toBe(false);
     expect(back.hasAttribute("role")).toBe(false);
+  } finally {
+    await page.cleanup();
+    vi.unstubAllGlobals();
+  }
+});
+
+it("turns on sign-off for the board", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  api.bots.list.mockResolvedValue([]);
+  api.tickets.list.mockResolvedValue({ tickets: [] });
+  api.boards.rename.mockResolvedValue({ id: "board-1", requireSignOff: true });
+  const page = await renderBoard();
+  try {
+    const toggle = page.container.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    if (!toggle) throw new Error("Missing sign-off switch");
+    expect(toggle.closest("label")?.textContent).toBe("Require sign-off");
+    expect(toggle.checked).toBe(false);
+    await act(async () => toggle.click());
+    await settle();
+    expect(api.boards.rename).toHaveBeenCalledWith({ requireSignOff: true });
+    expect(toggle.checked).toBe(true);
   } finally {
     await page.cleanup();
     vi.unstubAllGlobals();

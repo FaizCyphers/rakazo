@@ -61,6 +61,7 @@ export function boardsRoutes(ctx: RouterContext) {
         const data = {
           ...(input.name !== undefined ? { name: input.name } : {}),
           ...(changesPrefix ? { ticketPrefix: nextPrefix } : {}),
+          ...(input.requireSignOff !== undefined ? { requireSignOff: input.requireSignOff } : {}),
         };
         let row: BoardRow;
         if (changesPrefix) {
