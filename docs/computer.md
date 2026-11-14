@@ -60,8 +60,9 @@ Using apps on screen works on Mac and Windows; on a Mac, allow Rakazo under **Ac
 
 In every [approval mode](./approvals.md), a bot asks before it first uses each app in a space, and
 on a connected server before its first command there too, unless a Block rule refuses it. **Allow
-in this space** covers the rest of that space, in any chat. Bots use your apps only in chats you
-start with your own bots, never from routines or other people's messages.
+in this space** covers the rest of that space, in any chat. Bots use your computer only in chats you
+start with your own bots and on [board](./board.md) tickets your own bots work, never from routines
+or other people's messages.
 
 > [!WARNING]
 > A bot with access to your computer can read your files and run programs as you. Only turn it on
