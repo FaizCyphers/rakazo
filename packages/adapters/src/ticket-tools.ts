@@ -13,6 +13,7 @@ import { redactSecrets } from "@rakazo/core";
 import type { Prisma, PrismaClient } from "@rakazo/db";
 import {
   allocateTicketNumber,
+  coerceTicketAcceptance,
   coerceTicketStatus,
   ensureBoard,
   findTicket,
@@ -26,6 +27,10 @@ import { MAX_APPROVAL_DETAIL_LENGTH, MAX_APPROVAL_SUMMARY_LENGTH } from "./appro
 import type { TicketChangeNotifier } from "./ticket-changes.js";
 import { waitsOnIncomplete } from "./ticket-wake.js";
 import { sliceWellFormed } from "./utf8.js";
+
+/** Why a bot cannot mark a ticket done that is checked when its run ends. */
+export const TICKET_CHECKED_ON_FINISH =
+  "This ticket is checked against its acceptance steps when your run ends, which finishes it. Don't move it to done; end your reply with the Verification section.";
 
 type TicketToolDeps = {
   prisma: PrismaClient;
@@ -372,6 +377,11 @@ export async function updateTicket(
         throw new TicketRefusal(
           "This board needs a person's sign-off: move the ticket to review and they will move it to done.",
         );
+      // Work on a ticket that says what done means is checked as the run ends, which finishes it.
+      const doneWhen = data.doneWhen !== undefined ? data.doneWhen : current.doneWhen;
+      const acceptance = data.acceptance ?? coerceTicketAcceptance(current.acceptance);
+      if (input.botId && data.status === "done" && (doneWhen || acceptance.length))
+        throw new TicketRefusal(TICKET_CHECKED_ON_FINISH);
       let unblocked = false;
       if (prerequisites) {
         const ids = prerequisites.map((row) => row.id);

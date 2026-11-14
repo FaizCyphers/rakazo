@@ -12,6 +12,7 @@ import {
   getTicket,
   listBoardTickets,
   prepareTicketPlan,
+  TICKET_CHECKED_ON_FINISH,
   updateTicket,
 } from "./ticket-tools.js";
 
@@ -377,6 +378,30 @@ describe("ticket mutations", () => {
     // Moving it themselves gives the work its checks again.
     expect(s.tx.ticket.update).toHaveBeenCalledWith(
       expect.objectContaining({ data: expect.objectContaining({ verifyFailures: null }) }),
+    );
+  });
+
+  it("leaves finishing a ticket with acceptance steps to the check", async () => {
+    const s = mutationDeps();
+    await s.tx.ticket.update({ data: { acceptance: [{ text: "Tests pass", checked: false }] } });
+    s.tx.ticket.update.mockClear();
+    const input = { spaceId: "ws", userId: "user-1", id: "t1", status: "done" };
+
+    await expect(updateTicket(s.deps, { ...input, botId: "bot-1" })).resolves.toEqual({
+      error: TICKET_CHECKED_ON_FINISH,
+    });
+    expect(s.tx.ticket.update).not.toHaveBeenCalled();
+    // Done-when alone is checked too; a person can still finish it.
+    await s.tx.ticket.update({ data: { acceptance: null, doneWhen: "Shipped" } });
+    await expect(updateTicket(s.deps, { ...input, botId: "bot-1" })).resolves.toEqual({
+      error: TICKET_CHECKED_ON_FINISH,
+    });
+    await expect(updateTicket(s.deps, input)).resolves.toHaveProperty("ticket.status", "done");
+    // Without either, a bot finishes its ticket as before.
+    await s.tx.ticket.update({ data: { doneWhen: null, status: "doing" } });
+    await expect(updateTicket(s.deps, { ...input, botId: "bot-1" })).resolves.toHaveProperty(
+      "ticket.status",
+      "done",
     );
   });
 
