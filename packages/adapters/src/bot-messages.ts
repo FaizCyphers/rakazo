@@ -20,6 +20,13 @@ import {
   withTransactionRetry,
 } from "@rakazo/db";
 import { getLogger } from "@rakazo/logging";
+import type { DelegationTicket } from "./delegation-tickets.js";
+import {
+  delegationBoard,
+  delegationNotice,
+  showDelegationTicket,
+  trackDelegation,
+} from "./delegation-tickets.js";
 import type { ExecutorDeps } from "./executor-deps.js";
 import { runLeaseFor } from "./run-messages.js";
 
@@ -68,7 +75,10 @@ export async function loadBotMessageContext(
 }
 
 export async function messageBot(
-  deps: Pick<ExecutorDeps, "prisma" | "events" | "jobs" | "runLease">,
+  deps: Pick<
+    ExecutorDeps,
+    "prisma" | "events" | "jobs" | "runLease" | "onTicketChange" | "deploymentLabs"
+  >,
   run: {
     id: string;
     spaceId: string;
@@ -141,7 +151,11 @@ export async function messageBot(
       note: `Already sent to ${target.name} in this turn; it was not sent again.`,
     }) as const;
 
-  const wakePrompt = buildBotMessageWakePrompt({ from: sender, text: message, intent });
+  // A request from a running bot is delegated work, tracked as a ticket on the board.
+  const board =
+    intent === "request" && !options?.allowTerminalSource
+      ? await delegationBoard(deps, { spaceId: run.spaceId, botId: sender.id })
+      : null;
   const outboundBlock: MessageBlock = {
     kind: "bot_message_sent",
     toBotId: target.id,
@@ -157,6 +171,7 @@ export async function messageBot(
         runId: string;
         targetEventSeq: number;
         senderEventSeq: number;
+        ticket: DelegationTicket | null;
       }
     | {
         ok: false;
@@ -225,11 +240,21 @@ export async function messageBot(
           allowCancelledRun: options?.allowTerminalSource === true,
           lease: runLeaseFor(deps, run.id),
         });
+        const ticket = board
+          ? await trackDelegation(tx, board, {
+              spaceId: run.spaceId,
+              userId: run.userId,
+              fromBotId: sender.id,
+              toBotId: target.id,
+              message,
+            })
+          : null;
+        const text = ticket ? `${delegationNotice(ticket)}\n\n${message}` : message;
         const inboundBlock: MessageBlock = {
           kind: "bot_message_received",
           fromBotId: sender.id,
           fromBotName: sender.name,
-          text: message,
+          text,
           hop,
           intent,
           returnToMessageId: outbound.id,
@@ -251,8 +276,10 @@ export async function messageBot(
             botId: target.id,
             threadId: targetThreadId,
             userId: run.userId,
-            prompt: wakePrompt,
+            prompt: buildBotMessageWakePrompt({ from: sender, text, intent }),
             status: "queued",
+            // The run this starts is the ticket's run: it is checked, recovered and shown there.
+            ticketId: ticket?.id,
           },
         });
         const nextRun = await tx.run.create({
@@ -292,6 +319,7 @@ export async function messageBot(
           runId: nextRun.id,
           targetEventSeq: inboundEvent.seq,
           senderEventSeq: outboundEvent.seq,
+          ticket,
         };
       }, THREAD_LOCK_TRANSACTION_OPTIONS),
     );
@@ -320,12 +348,15 @@ export async function messageBot(
     // The queued run is durable; the job reconciler repairs a missed wake.
     getLogger().error("bot message enqueue", error);
   });
+  const { ticket } = committed;
+  if (ticket) await showDelegationTicket(deps, run.spaceId, ticket, target.id);
   return {
     ok: true as const,
     botId: target.id,
     name: target.name,
     delivered: message,
-    note: `Sent to ${target.name}. Delivery is async; a reply wakes you later as a new message. Continue independent work; send another update later only if it adds something new.`,
+    ...(ticket ? { ticket: ticket.ref } : {}),
+    note: `${ticket ? `Tracked as ${ticket.ref}. ` : ""}Sent to ${target.name}. Delivery is async; a reply wakes you later as a new message. Continue independent work; send another update later only if it adds something new.`,
   };
 }
 
